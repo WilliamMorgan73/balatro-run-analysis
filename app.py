@@ -22,6 +22,7 @@ RELOAD_ORDER = [
     "loader",
     "metrics",
     "economy",
+    "actions",
     "plots",
     "sprites",
     "game_text",
@@ -52,7 +53,15 @@ def reload_if_changed() -> None:
 
 reload_if_changed()
 
-from balatro_analysis import catalog, collection, economy, export, metrics, plots  # noqa: E402
+from balatro_analysis import (  # noqa: E402
+    actions,
+    catalog,
+    collection,
+    economy,
+    export,
+    metrics,
+    plots,
+)
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
 from balatro_analysis.loader import Run, find_runs, load_run  # noqa: E402
 from balatro_analysis.names import Names  # noqa: E402
@@ -63,6 +72,7 @@ sys.modules["balatro_analysis"]._app_mtime = package_mtime()  # see reload_if_ch
 
 DEFAULT_RUNS_DIR = Path(__file__).parent.parent / "jackdaw-balatro" / "runs"
 MIN_VISITS = 5  # money-curve points need at least this many shop visits
+MIN_LEGAL = 20  # preference needs an action to have been legal this often
 ICON_WIDTH = 71  # Balatro's 1x card size; sprites are 2x for sharpness
 
 
@@ -113,12 +123,18 @@ def need(df, what: str, logs_missing: bool = False) -> bool:
 CHARTS: dict[str, object] = {}
 
 
-def need_new(df, what: str) -> bool:
+LOG_VERSIONS = {
+    2: "cash-out breakdown and shops.jsonl",
+    3: "legal actions per step",
+}
+
+
+def need_new(df, what: str, version: int = 2) -> bool:
     """Like need(), for data only runs from the newer training script log."""
     if df is None or len(df) == 0:
         st.info(
             f"No {what}: needs a run made with the current training script "
-            "(log_version 2: cash-out breakdown and shops.jsonl)."
+            f"(log_version {version}: {LOG_VERSIONS[version]})."
         )
         return False
     return True
@@ -331,13 +347,164 @@ with tabs[1]:
 # --- Actions --------------------------------------------------------------
 with tabs[2]:
     if tabs[2].open:
-        freq = metrics.action_frequency(runs)
-        if need(freq, "shop actions"):
-            chart(plots.action_frequency(freq, names), "action share")
-        run_name = st.selectbox("Run for heatmap", run_names, key="actions_run")
-        heat = metrics.action_by_ante(by_name[run_name])
-        if need(heat, "per-step action data", by_name[run_name].steps is None):
-            chart(plots.action_by_ante(heat, run_name, names), f"actions by ante {run_name}")
+        summary = actions.visit_summary(runs)
+        if len(summary):
+            top_row = summary.iloc[0]
+            st.caption(
+                f"Shop visits in **{top_row['run']}**"
+                + (" (every selected run is in the table below)" if len(summary) > 1 else "")
+            )
+            cols = st.columns(4)
+            cols[0].metric("Decisions per visit", f"{top_row['decisions_per_visit']:.2f}")
+            cols[1].metric("Visits leaving at once", f"{top_row['leave_at_once']:.1%}")
+            cols[2].metric("Visits with a buy", f"{top_row['with_buy']:.1%}")
+            cols[3].metric(
+                "Most common first action",
+                names.action(top_row["top_first_action"]),
+                f"{top_row['top_first_share']:.0%} of visits",
+                delta_color="off",
+                delta_arrow="off",
+            )
+            if len(summary) > 1:
+                pct = st.column_config.NumberColumn(format="percent")
+                table(
+                    summary,
+                    {"top_first_action": "action"},
+                    column_config={
+                        names.column(c): pct
+                        for c in (
+                            "leave_at_once",
+                            "with_buy",
+                            "with_sell",
+                            "with_reroll",
+                            "top_first_share",
+                        )
+                    }
+                    | {
+                        names.column("decisions_per_visit"): st.column_config.NumberColumn(
+                            format="%.2f"
+                        )
+                    },
+                )
+
+        sub = st.tabs(
+            [
+                "Overview",
+                "Context",
+                "Sequences",
+                "Over training",
+                "Availability",
+                "Actions vs outcome",
+            ],
+            key="actions_tab",
+            on_change="rerun",
+        )
+        with sub[0]:
+            if sub[0].open:
+                fam = actions.family_share(runs)
+                if need(fam, "shop actions"):
+                    chart(plots.family_share(fam, names), "action family share")
+                freq = metrics.action_frequency(runs)
+                if need(freq, "shop actions"):
+                    chart(plots.action_frequency(freq, names), "action share")
+                visits = actions.decisions_per_visit(runs)
+                if need(visits, "shop visits", no_steps):
+                    chart(plots.decisions_per_visit(visits, names), "decisions per visit")
+
+        with sub[1]:
+            if sub[1].open:
+                left, right = st.columns(2)
+                run_name = left.selectbox("Run", run_names, key="actions_run")
+                split = right.selectbox("Split by", list(actions.SPLITS), key="actions_split")
+                heat = actions.share_by(by_name[run_name], split)
+                if need(heat, "per-step action data", by_name[run_name].steps is None):
+                    st.caption(
+                        f"Each column sums to 100%: what the agent did given the {split.lower()}"
+                        + (" (money before the decision)." if split == "Money" else ".")
+                    )
+                    chart(
+                        plots.action_heatmap(
+                            heat, f"Action share by {split.lower()}: {run_name}", split, names
+                        ),
+                        f"actions by {split.lower()} {run_name}",
+                    )
+
+        with sub[2]:
+            if sub[2].open:
+                run_name = st.selectbox("Run", run_names, key="actions_seq_run")
+                run = by_name[run_name]
+                matrix = actions.transition_matrix(run)
+                if need(matrix, "per-step action data", run.steps is None):
+                    chart(
+                        plots.transition_matrix(matrix, run_name, names), f"transitions {run_name}"
+                    )
+                    pos = actions.share_by(run, "Position in visit")
+                    chart(
+                        plots.action_heatmap(
+                            pos,
+                            f"Action share by position in the visit: {run_name}",
+                            "decision number in the visit",
+                            names,
+                        ),
+                        f"actions by position {run_name}",
+                    )
+                    seqs = actions.top_sequences(run)
+                    st.subheader("Most common whole visits")
+                    seqs["sequence"] = [
+                        " → ".join(names.action(a) for a in seq.split(" → "))
+                        for seq in seqs["sequence"]
+                    ]
+                    table(
+                        seqs,
+                        column_config={
+                            names.column("share"): st.column_config.NumberColumn(format="percent")
+                        },
+                    )
+
+        with sub[3]:
+            if sub[3].open:
+                bins = st.slider("Episode bins", 2, 50, 10, key="actions_bins")
+                over = actions.family_over_training(runs, bins)
+                if need(over, "per-step action data", no_steps):
+                    st.caption(
+                        "Share of each kind of decision within each block of episodes. A random "
+                        "agent stays flat; a learning one should drift."
+                    )
+                    chart(plots.family_over_training(over, names), "action families over training")
+
+        with sub[4]:
+            if sub[4].open:
+                avail = actions.availability(runs)
+                if need_new(avail, "legal-action data", version=3):
+                    missing = sorted(set(run_names) - set(avail["run"]))
+                    if missing:
+                        st.caption("Not shown (logged before log_version 3): " + ", ".join(missing))
+                    st.caption(
+                        "Uniform-random rate: the chance of picking the action if the agent "
+                        "chose evenly among the legal actions each time it was legal. A "
+                        "preference of 1 is random-like; above 1 the agent favours it."
+                    )
+                    chart(plots.availability(avail, names), "action availability")
+                    st.caption(
+                        f"Preference leaves out actions legal fewer than {MIN_LEGAL} times "
+                        "(too few to tell)."
+                    )
+                    chart(
+                        plots.preference(avail[avail["legal_count"] >= MIN_LEGAL], names),
+                        "action preference vs uniform",
+                    )
+                    chart(plots.legal_counts(actions.legal_counts(runs), names), "legal actions")
+
+        with sub[5]:
+            if sub[5].open:
+                corr = actions.action_outcome_correlations(runs)
+                if need(corr, "enough episodes with shop data", no_steps):
+                    st.caption(
+                        "Spearman ρ between how often each kind of decision is made per shop "
+                        "visit and the ante reached (+1: more of it goes with deeper runs). "
+                        "Per visit, because longer runs visit more shops."
+                    )
+                    chart(plots.action_outcome_correlations(corr, names), "actions vs ante reached")
 
 # --- Economy --------------------------------------------------------------
 with tabs[3]:

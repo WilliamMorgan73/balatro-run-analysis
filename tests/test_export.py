@@ -37,6 +37,11 @@ def test_export_zip_contents(run):
         "tables/income_breakdown.csv",
         "tables/offer_conversion.csv",
         "tables/economy_kpis.csv",
+        "tables/action_family_share.csv",
+        "tables/decisions_per_visit.csv",
+        "tables/action_availability.csv",
+        "tables/action_transitions__run_small.csv",
+        "tables/top_sequences__run_small.csv",
     } <= files
     readme = z.read("README.txt").decode()
     assert "runs: run_small" in readme
@@ -52,6 +57,9 @@ def test_export_has_keys_and_names(run):
     steps = _csv(z, "runs/run_small/steps.csv")
     assert steps.loc[3, "jokers_before"] == "j_joker;j_greedy_joker"  # lists flattened
     assert steps.loc[0, "action_name_name"] == "Buy card 1"
+    assert steps.loc[0, "legal"] == "0;1;2;16"  # int lists flattened too
+    avail = _csv(z, "tables/action_availability.csv")
+    assert avail.loc[0, "action_name"] == "Buy card 1"
     swaps = _csv(z, "tables/sell_then_buy__run_small.csv")
     assert swaps.iloc[0][["sold_name", "bought_name"]].tolist() == ["Joker", "Banner"]
 

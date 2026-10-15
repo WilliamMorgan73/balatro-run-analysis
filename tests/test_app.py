@@ -26,9 +26,22 @@ ECON_TABS = [
     "Shop offers",
 ]
 
+ACTIONS_TABS = [
+    "Overview",
+    "Context",
+    "Sequences",
+    "Over training",
+    "Availability",
+    "Actions vs outcome",
+]
+
 
 def _run(
-    runs_dir: Path, game: Path | None = None, tab: str | None = None, econ: str | None = None
+    runs_dir: Path,
+    game: Path | None = None,
+    tab: str | None = None,
+    econ: str | None = None,
+    actions: str | None = None,
 ) -> AppTest:
     """Run the app on ``runs_dir``; tabs render lazily, so pick the one to inspect."""
     at = AppTest.from_file(APP, default_timeout=60)
@@ -38,6 +51,8 @@ def _run(
         at.session_state["main_tab"] = tab
     if econ:
         at.session_state["econ_tab"] = econ
+    if actions:
+        at.session_state["actions_tab"] = actions
     at.run()
     at.text_input(key="runs_dir").set_value(str(runs_dir)).run()
     return at
@@ -222,3 +237,54 @@ def test_economy_new_data_note_for_old_runs(tmp_path, econ):
     at = _run(tmp_path, tab="Economy", econ=econ)
     assert not at.exception
     assert any("needs a run made with" in i.value for i in at.info)
+
+
+# --- Actions -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("game", [False, True])
+@pytest.mark.parametrize("sub", ACTIONS_TABS)
+def test_actions_subtabs_render(runs_dir, fake_game, sub, game):
+    at = _run(runs_dir, fake_game if game else None, tab="Actions", actions=sub)
+    assert not at.exception
+    assert not any("needs a run made with" in i.value for i in at.info)
+    if sub != "Actions vs outcome":  # the fixture has too few episodes to correlate
+        assert len(at.get("plotly_chart")) >= 1
+
+
+def test_actions_context_splits(runs_dir):
+    at = _run(runs_dir, tab="Actions", actions="Context")
+    split = next(s for s in at.selectbox if s.label == "Split by")
+    for option in split.options:
+        split.set_value(option).run()
+        assert not at.exception
+        assert len(at.get("plotly_chart")) == 1
+
+
+def test_actions_kpis(runs_dir):
+    at = _run(runs_dir, tab="Actions")
+    kpis = {m.label: m.value for m in at.metric}
+    # fixture: 3 visits of 2, 2 and 4 decisions, all starting with a buy
+    assert kpis["Decisions per visit"] == "2.67"
+    assert kpis["Visits leaving at once"] == "0.0%"
+    assert kpis["Visits with a buy"] == "100.0%"
+    assert kpis["Most common first action"] == "Buy card 1"
+
+
+def test_actions_availability_note_for_old_runs(tmp_path):
+    """Runs from before log_version 3 have no legal actions: a note, not an error."""
+    import json
+    import shutil
+
+    from conftest import RUNS_DIR
+
+    old = tmp_path / "old_logs"
+    shutil.copytree(RUNS_DIR / "run_small", old)
+    steps = old / "steps.jsonl"
+    rows = [json.loads(line) for line in steps.read_text().splitlines()]
+    steps.write_text(
+        "".join(json.dumps({k: v for k, v in r.items() if k != "legal"}) + "\n" for r in rows)
+    )
+    at = _run(tmp_path, tab="Actions", actions="Availability")
+    assert not at.exception
+    assert any("log_version 3" in i.value for i in at.info)

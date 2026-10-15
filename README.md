@@ -96,18 +96,33 @@ runs (only `episodes.csv`, no deck column) still load; tabs that need missing da
 |---|---|---|
 | `episodes.csv` | episode | ante reached, wins, deck, stake, return, action counts, $ spent, final jokers |
 | `config.json` | run | agents, seed prefix, CLI args (shown under *Run configs*) |
-| `steps.jsonl` | shop decision | money, item bought/sold, jokers held, reward |
+| `steps.jsonl` | shop decision | money, item bought/sold, jokers held, reward; legal actions † |
 | `rounds.jsonl` | blind played | score vs target, which blind ended the run; cash-out breakdown \* |
 | `shops.jsonl` \* | shop offer (entering a shop, each reroll) | what was offered, at what price, with how much money |
 
 \* `log_version` 2 runs. Older (v1) runs logged beaten bosses under the *next* ante; the loader
 moves them back to the ante they were played in.
+† `log_version` 3 runs.
 
 ## Tabs
 
 - **Overview**: summary per run, rolling learning curve (ante / win rate / return), ante-reached distribution
 - **Decks**: deck cards with episodes and mean ante; mean ante by deck and stake per run
-- **Actions**: share of each of the 17 shop actions; action × ante heatmap
+- **Actions**: KPI strip (decisions per visit, visits leaving at once, visits with a buy, most
+  common first action) and sub-tabs:
+  - *Overview*: share by kind of decision (buy card/pack/voucher, sell, use, reroll, leave), share
+    of each of the 17 actions, decisions per visit
+  - *Context*: action share split by ante, money before the decision, jokers held, next blind or
+    position in the visit
+  - *Sequences*: what follows each decision (transition matrix), action share by position in the
+    visit, the most common whole visits
+  - *Over training*: kinds of decision across blocks of episodes
+  - *Availability* †: how often each action was legal and chosen when legal; preference vs a
+    uniform-random agent; legal actions per decision
+  - *Actions vs outcome*: Spearman correlation of each kind of decision per visit with ante
+    reached
+
+  † needs runs from the current training script (`log_version` 3 in `config.json`)
 - **Economy**: KPI strip (spend, selling, rerolls, money in/out of the shop, exits at the interest
   cap, money at death) and sub-tabs:
   - *Money flow*: money entering/leaving the shop by round (median + IQR), by ante, at run end

@@ -19,7 +19,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-from balatro_analysis import economy, metrics
+from balatro_analysis import actions, economy, metrics
 from balatro_analysis.loader import Run
 from balatro_analysis.names import DEFAULT_KEYS, Names
 
@@ -42,7 +42,7 @@ def with_names(df: pd.DataFrame, keys: dict[str, str] | None = None) -> pd.DataF
     out = df.copy()
     for col in out.columns:
         if out[col].map(lambda v: isinstance(v, list)).any():
-            out[col] = out[col].map(lambda v: ";".join(v) if isinstance(v, list) else v)
+            out[col] = out[col].map(lambda v: ";".join(map(str, v)) if isinstance(v, list) else v)
     kinds = {**DEFAULT_KEYS, **(keys or {})}
     for col, kind in kinds.items():
         if col in out and f"{col}_name" not in out:
@@ -61,6 +61,15 @@ def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[st
         "learning_curve": metrics.learning_curve(runs, window),
         "ante_distribution": metrics.ante_distribution(runs),
         "action_frequency": with_names(metrics.action_frequency(runs), {"action": "action"}),
+        "action_family_share": actions.family_share(runs),
+        "decisions_per_visit": actions.decisions_per_visit(runs),
+        "action_visit_summary": with_names(
+            actions.visit_summary(runs), {"top_first_action": "action"}
+        ),
+        "action_availability": with_names(actions.availability(runs), {"action": "action"}),
+        "legal_counts": actions.legal_counts(runs),
+        "action_family_over_training": actions.family_over_training(runs),
+        "action_vs_outcome": actions.action_outcome_correlations(runs),
         "money_by_ante": metrics.money_by_ante(runs),
         "spend_per_episode": metrics.spend_per_episode(runs),
         "most_bought": with_names(metrics.most_bought(runs, top)),
@@ -90,6 +99,10 @@ def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[st
             if r.steps is not None
             else pd.DataFrame()
         )
+        tables[f"action_transitions__{tag}"] = with_names(
+            actions.transitions(r), {"from": "action", "to": "action"}
+        )
+        tables[f"top_sequences__{tag}"] = actions.top_sequences(r)
         tables[f"cooccurrence__{tag}"] = (
             metrics.joker_cooccurrence(r, top).rename_axis("joker").reset_index()
         )
