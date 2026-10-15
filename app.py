@@ -39,7 +39,8 @@ def reload_if_changed() -> None:
 
 reload_if_changed()
 
-from balatro_analysis import catalog, export, metrics, plots  # noqa: E402
+from balatro_analysis import catalog, collection, export, metrics, plots  # noqa: E402
+from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
 from balatro_analysis.loader import Run, find_runs, load_run  # noqa: E402
 from balatro_analysis.names import Names  # noqa: E402
 from balatro_analysis.picker import PickerUnavailable, pick_directory  # noqa: E402
@@ -70,9 +71,20 @@ def chart_export_problem() -> str | None:
     return export.export_problem()
 
 
+# pkg_mtime in these keys: objects built by old code are never reused after a change
+
+
 @st.cache_resource
-def cached_sprites(archive: str) -> Sprites:
-    return Sprites(Path(archive))
+def cached_sprites(archive: str, pkg_mtime: float, scale: int = 2) -> Sprites:
+    return Sprites(Path(archive), scale=scale)
+
+
+@st.cache_resource(show_spinner="Reading joker text from the game…")
+def cached_game_text(archive: str, pkg_mtime: float) -> GameText | None:
+    try:
+        return GameText.load(Path(archive))
+    except (KeyError, OSError, UnicodeError):  # unexpected game version/layout
+        return None
 
 
 def need(df, what: str, logs_missing: bool = False) -> bool:
@@ -203,7 +215,7 @@ with st.sidebar:
         st.text_input("Balatro install", key="game_path", help="Folder or Balatro.exe/.love")
         st.button("Browse…", on_click=browse_game, key="browse_game")
         archive = game_archive(st.session_state.game_path) if st.session_state.game_path else None
-        sprites = cached_sprites(str(archive)) if archive else None
+        sprites = cached_sprites(str(archive), pkg_mtime) if archive else None
         if sprites:
             st.caption(f"Icons from {archive}")
         else:
@@ -217,7 +229,18 @@ by_name = {r.name: r for r in runs}
 no_steps = any(r.steps is None for r in runs)
 no_rounds = any(r.rounds is None for r in runs)
 
-tabs = st.tabs(["Overview", "Decks", "Actions", "Economy", "Jokers", "Rounds", "Episode explorer"])
+tabs = st.tabs(
+    [
+        "Overview",
+        "Decks",
+        "Actions",
+        "Economy",
+        "Jokers",
+        "Joker collection",
+        "Rounds",
+        "Episode explorer",
+    ]
+)
 
 # --- Overview -------------------------------------------------------------
 with tabs[0]:
@@ -329,8 +352,35 @@ with tabs[4]:
             row_height=60 if sprites else None,
         )
 
-# --- Rounds ---------------------------------------------------------------
+# --- Joker collection -----------------------------------------------------
 with tabs[5]:
+    game_text = cached_game_text(str(archive), pkg_mtime) if archive else None
+    cards = collection.build_cards(
+        metrics.joker_stats(runs),
+        game_text,
+        cached_sprites(str(archive), pkg_mtime, 1) if archive else None,
+    )
+    c1, c2, c3, c4 = st.columns([3, 3, 2, 2])
+    query = c1.text_input("Search", placeholder="name, key or effect text", key="jk_query")
+    rarities = c2.multiselect(
+        "Rarity",
+        list(RARITY),
+        default=list(RARITY),
+        format_func=lambda r: RARITY[r][0],
+        key="jk_rarity",
+    )
+    sort = c3.selectbox("Sort by", list(collection.SORTS), key="jk_sort")
+    only_used = c4.toggle("Only used in runs", key="jk_used")
+    shown = collection.select(cards, query, rarities, only_used, sort)
+    note = "" if game_text else " · art and effect text need the game (see Game assets)"
+    st.caption(f"Showing {len(shown)} of {len(cards)} jokers · stats from the selected runs{note}")
+    if shown:
+        st.html(collection.grid_html(shown, names))
+    else:
+        st.info("No jokers match.")
+
+# --- Rounds ---------------------------------------------------------------
+with tabs[6]:
     ratio = metrics.score_ratio(runs)
     if need(ratio, "round data", no_rounds):
         chart(plots.score_ratio(ratio, names), "score vs target")
@@ -339,7 +389,7 @@ with tabs[5]:
         chart(plots.deaths(dead, names), "blind that ended the run")
 
 # --- Episode explorer -----------------------------------------------------
-with tabs[6]:
+with tabs[7]:
     run_name = st.selectbox("Run", run_names, key="explorer_run")
     run = by_name[run_name]
     eps = run.episodes.set_index("episode")

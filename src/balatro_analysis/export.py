@@ -65,6 +65,7 @@ def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[st
         "spend_per_episode": metrics.spend_per_episode(runs),
         "most_bought": with_names(metrics.most_bought(runs, top)),
         "first_bought_ante": with_names(metrics.first_bought_ante(runs)),
+        "joker_stats": with_names(metrics.joker_stats(runs).reset_index()),
         "score_ratio": with_names(metrics.score_ratio(runs)),
         "deaths": with_names(metrics.deaths(runs)),
     }

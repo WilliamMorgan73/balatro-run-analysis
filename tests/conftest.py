@@ -64,7 +64,70 @@ def fake_game(tmp_path: Path) -> Path:
             _atlas(2, {(0, 0): JOKER_COLOUR, (3, 9): SOUL_COLOUR}),
         )
         z.writestr("resources/textures/2x/Enhancers.png", _atlas(2, {(3, 2): DECK_COLOUR}))
+        z.writestr("resources/textures/1x/Jokers.png", _atlas(1, {(0, 0): JOKER_COLOUR}))
+        z.writestr("localization/en-us.lua", FAKE_LOCALIZATION)
+        z.writestr("card.lua", FAKE_CARD_LUA)
     return game
+
+
+# Shaped like the game's files (written for these tests, not copied from the game)
+FAKE_LOCALIZATION = """
+return {
+    descriptions={
+        Joker={
+            j_joker={
+                name="Joker",
+                text={
+                    "{C:mult}+#1#{} Mult",
+                },
+            },
+            j_greedy_joker={
+                name="Greedy Joker",
+                text={
+                    "Played {C:diamonds}#2#{} cards",
+                    "give {C:mult}+#1#{} Mult",
+                },
+            },
+            j_cavendish={
+                name="Cavendish",
+                text={
+                    "{X:mult,C:white} X#1# {} Mult",
+                    "{C:green}#2# in #3#{} chance <gone>",
+                },
+            },
+            j_castle={
+                name="Castle",
+                text={
+                    "Gains {C:chips}+#1#{} per {V:1}#2#{} discard",
+                },
+            },
+            j_misprint={
+                name="Misprint",
+                text={
+                    "",
+                },
+            },
+        },
+    },
+    misc={
+        suits_singular={
+            Clubs="Club",
+            Diamonds="Diamond",
+        },
+    },
+}
+"""
+
+FAKE_CARD_LUA = """
+function Card:generate_UIBox_ability_table()
+        if self.ability.name == 'Joker' then loc_vars = {self.ability.mult}
+        elseif self.ability.name == 'Greedy Joker' or self.ability.name == 'Lusty Joker' then
+            loc_vars = {self.ability.extra.s_mult, localize(self.ability.extra.suit, 'suits_singular')}
+        elseif self.ability.name == 'Cavendish' then loc_vars = {self.ability.extra.Xmult, ''..(G.GAME and G.GAME.probabilities.normal or 1), self.ability.extra.odds}
+        elseif self.ability.name == 'Castle' then loc_vars = {self.ability.extra.chip_mod, localize(G.GAME.current_round.castle_card.suit, 'suits_singular'), colours = {G.C.SUITS.Spades}}
+        end
+end
+"""
 
 
 @pytest.fixture

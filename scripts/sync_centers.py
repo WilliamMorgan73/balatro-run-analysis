@@ -29,6 +29,16 @@ def main() -> None:
             entry["pos"] = c["pos"]
             if c.get("soul_pos"):
                 entry["soul_pos"] = c["soul_pos"]
+        if c["set"] == "Joker":
+            # For the collection tab: collection order, rarity (1-4), base cost, the
+            # starting config (fills the effect text's #n# values) and an effect category
+            entry.update(
+                order=c.get("order"),
+                rarity=c.get("rarity"),
+                cost=c.get("cost"),
+                config=c.get("config") or {},
+                effect=c.get("effect") or "",
+            )
         centers[key] = entry
 
     blinds = {

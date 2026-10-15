@@ -19,7 +19,7 @@ def _run(runs_dir: Path, game: Path | None = None) -> AppTest:
 def test_app_renders_all_tabs(runs_dir):
     at = _run(runs_dir)
     assert not at.exception
-    assert len(at.tabs) == 7
+    assert len(at.tabs) == 8
     assert at.sidebar.multiselect[0].value == ["run_small"]
     assert len(at.get("image")) == 0  # no game -> names only
 
@@ -120,3 +120,22 @@ def test_stale_modules_reloaded(runs_dir, monkeypatch):
     assert not at.exception
     assert metrics.filter_episodes.__code__ is not old_filter.__code__
     assert metrics.filter_episodes.__name__ == real.__name__
+
+
+def test_joker_collection_tab(runs_dir, fake_game):
+    at = _run(runs_dir, fake_game)
+    assert not at.exception
+    assert any(c.value.startswith("Showing 150 of 150 jokers") for c in at.caption)
+    at.text_input(key="jk_query").set_value("greedy").run()
+    assert any(c.value.startswith("Showing 1 of 150") for c in at.caption)
+    html = next(h.proto.body for h in at.get("html"))
+    assert "Greedy Joker" in html and "Played" in html  # name + effect text from the game
+    at.toggle(key="jk_used").set_value(True).run()
+    at.text_input(key="jk_query").set_value("").run()
+    assert any(c.value.startswith("Showing 3 of 150") for c in at.caption)
+
+
+def test_joker_collection_without_game(runs_dir):
+    at = _run(runs_dir)
+    assert not at.exception
+    assert any("need the game" in c.value for c in at.caption)

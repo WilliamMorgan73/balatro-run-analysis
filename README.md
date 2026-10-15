@@ -72,12 +72,17 @@ Sidebar → **Export**, always for the current run/episode/deck/stake selection:
 Chart rendering uses kaleido with your local Chrome/Chromium. If none is found the chart
 buttons say so; `uv run kaleido_get_chrome` downloads one.
 
-## Joker and deck icons
+## Joker and deck icons, joker text
 
-Icons are cut at runtime from **your own copy of Balatro**; no game art is stored in
-this repo. The game is found automatically in Steam libraries (Linux, Flatpak, macOS,
+Icons and joker effect text are read at runtime from **your own copy of Balatro**; no game
+art or text is stored in this repo. The game is found automatically in Steam libraries (Linux, Flatpak, macOS,
 Windows), or set `BALATRO_PATH` / the *Game assets* sidebar field to the install folder
 or `Balatro.exe`. Without the game the dashboard shows names only.
+
+Effect text comes from the game's `localization/en-us.lua`; its `#1#`-style values are filled
+from the game's own `card.lua` expressions, evaluated against each joker's starting stats with
+a small whitelisted evaluator (never `eval`). Values that only exist mid-run (this round's suit,
+current money, ...) show as a faded **?**.
 
 Names and sprite positions come from `src/balatro_analysis/data/{centers,blinds}.json`,
 generated from jackdaw's data by `uv run python scripts/sync_centers.py`.
@@ -101,6 +106,9 @@ runs (only `episodes.csv`, no deck column) still load; tabs that need missing da
 - **Actions**: share of each of the 17 shop actions; action × ante heatmap
 - **Economy**: money before shop decisions by ante; $ spent per episode
 - **Jokers**: most-bought gallery; ante first bought; end-of-episode co-occurrence; sold → next bought pairs
+- **Joker collection**: all 150 jokers as game-style cards (art, effect text, rarity, cost) with
+  stats from the selected runs (times bought, first ante, held at end, mean ante); search,
+  rarity filter, sort, "only used in runs"
 - **Rounds**: score / target by ante and blind type; blinds that ended runs
 - **Episode explorer**: one episode's deck, final jokers, shop decisions, money curve and blinds
 
@@ -115,6 +123,8 @@ src/balatro_analysis/catalog.py display names for game keys (centers, blinds)
 src/balatro_analysis/names.py   in-game names vs exact keys (the sidebar toggle)
 src/balatro_analysis/export.py  data ZIP and PNG/SVG chart export
 src/balatro_analysis/sprites.py icons from the local game install
+src/balatro_analysis/game_text.py joker effect text from the local game install
+src/balatro_analysis/collection.py the Joker collection cards
 src/balatro_analysis/picker.py  native folder dialog
 scripts/sync_centers.py         regenerate the name/sprite catalog from jackdaw
 examples/jackdaw/               files to paste into a jackdaw-balatro checkout

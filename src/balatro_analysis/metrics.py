@@ -249,6 +249,51 @@ def final_builds(run: Run) -> list[list[str]]:
     return [[j for j in s.split(";") if j] for s in run.episodes["final_jokers"]]
 
 
+JOKER_STATS_COLUMNS = ["bought", "episodes_bought", "held_at_end", "mean_ante_held", "first_ante"]
+
+
+def joker_stats(runs: list[Run]) -> pd.DataFrame:
+    """Per joker, across ``runs``: times bought, episodes it was bought in, episodes
+    it was held at the end, mean ante reached in those, median ante first bought.
+
+    Indexed by joker key; jokers never seen are absent.
+    """
+    bought_rows, held_rows = [], []
+    for r in runs:
+        p = joker_purchases(r)
+        if not p.empty:
+            bought_rows.append(p[["episode", "ante", "item_key"]].assign(run=r.name))
+        if "final_jokers" in r.episodes:
+            for ep, ante, build in zip(
+                r.episodes["episode"], r.episodes["ante"], final_builds(r), strict=True
+            ):
+                held_rows += [
+                    {"run": r.name, "episode": ep, "ante": ante, "joker": j} for j in set(build)
+                ]
+    parts = []
+    if bought_rows:
+        b = _concat(bought_rows).rename(columns={"item_key": "joker"})
+        first = b.groupby(["run", "episode", "joker"])["ante"].min()
+        parts.append(
+            pd.DataFrame(
+                {
+                    "bought": b.groupby("joker").size(),
+                    "episodes_bought": first.groupby("joker").size(),
+                    "first_ante": first.groupby("joker").median(),
+                }
+            )
+        )
+    if held_rows:
+        h = pd.DataFrame(held_rows).groupby("joker")["ante"]
+        parts.append(pd.DataFrame({"held_at_end": h.size(), "mean_ante_held": h.mean()}))
+    stats = pd.concat(parts, axis=1) if parts else pd.DataFrame()
+    stats = stats.reindex(columns=JOKER_STATS_COLUMNS)
+    for col in ("bought", "episodes_bought", "held_at_end"):
+        stats[col] = stats[col].fillna(0).astype(int)
+    stats.index.name = "joker"
+    return stats
+
+
 def joker_cooccurrence(run: Run, top: int = 15) -> pd.DataFrame:
     """Symmetric count matrix: how often two jokers ended an episode together.
 
