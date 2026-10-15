@@ -23,15 +23,42 @@ def _labels(names: Names, *cols: str) -> dict[str, str]:
     return {c: names.column(c) for c in cols}
 
 
-def learning_curve(df: pd.DataFrame, metric: str, names: Names) -> go.Figure:
+def _translucent(colour: str, alpha: float) -> str:
+    """``#rrggbb`` -> ``rgba(r, g, b, alpha)``; other colour strings pass through."""
+    if isinstance(colour, str) and colour.startswith("#") and len(colour) == 7:
+        r, g, b = (int(colour[i : i + 2], 16) for i in (1, 3, 5))
+        return f"rgba({r}, {g}, {b}, {alpha})"
+    return colour
+
+
+def learning_curve(df: pd.DataFrame, metric: str, names: Names, band: bool = True) -> go.Figure:
     fig = px.line(
         df,
         x="episode",
         y=metric,
         color="run",
         labels=_labels(names, "episode", "run"),
-        title=f"Rolling {metric}",
+        title=f"Rolling {metric}" + (" (95% band)" if band else ""),
     )
+    if band and f"{metric} low" in df:
+        bands = []
+        for line in fig.data:
+            g = df[df["run"] == line.legendgroup]
+            bands.append(
+                go.Scatter(
+                    x=[*g["episode"], *g["episode"][::-1]],
+                    y=[*g[f"{metric} high"], *g[f"{metric} low"][::-1]],
+                    fill="toself",
+                    fillcolor=_translucent(line.line.color, 0.18),
+                    line={"width": 0},
+                    legendgroup=line.legendgroup,
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
+        lines = len(fig.data)
+        fig.add_traces(bands)
+        fig.data = fig.data[lines:] + fig.data[:lines]  # bands under the lines
     return _fig(fig, hovermode="x unified")
 
 
@@ -484,7 +511,15 @@ def economy_by_outcome(econ: pd.DataFrame, metric: str, label: str, names: Names
     return _fig(fig)
 
 
+def _significance(df: pd.DataFrame) -> pd.DataFrame:
+    """Add ``sig``: "*" on bars whose BH-adjusted p (q) < 0.05, for the bar text."""
+    if "significant" not in df:
+        return df.assign(sig="")
+    return df.assign(sig=df["significant"].map({True: "*", False: ""}).fillna(""))
+
+
 def outcome_correlations(df: pd.DataFrame, names: Names) -> go.Figure:
+    df = _significance(df)
     fig = px.bar(
         df,
         x="spearman_rho",
@@ -492,13 +527,21 @@ def outcome_correlations(df: pd.DataFrame, names: Names) -> go.Figure:
         color="run",
         barmode="group",
         orientation="h",
-        hover_data=["episodes"],
+        text="sig",
+        hover_data={c: ":.3g" for c in ("p_value", "q_value") if c in df}
+        | {"episodes": True, "sig": False},
         labels=_labels(names, "run", "episodes")
-        | {"spearman_rho": "Spearman ρ with ante reached", "metric": ""},
+        | {
+            "spearman_rho": "Spearman ρ with ante reached",
+            "metric": "",
+            "p_value": "p",
+            "q_value": "q (BH-adjusted p)",
+        },
         title="Which economy habits go with deeper runs?",
     )
     fig.add_vline(x=0, line_color="grey")
     fig.update_xaxes(range=[-1, 1])
+    fig.update_traces(textposition="outside", cliponaxis=False)
     return _fig(fig, height=max(380, 34 * df["metric"].nunique()))
 
 
@@ -637,6 +680,7 @@ def family_over_training(df: pd.DataFrame, names: Names) -> go.Figure:
 
 
 def action_outcome_correlations(df: pd.DataFrame, names: Names) -> go.Figure:
+    df = _significance(df)
     fig = px.bar(
         df,
         x="spearman_rho",
@@ -644,14 +688,22 @@ def action_outcome_correlations(df: pd.DataFrame, names: Names) -> go.Figure:
         color="run",
         barmode="group",
         orientation="h",
-        hover_data=["episodes"],
+        text="sig",
+        hover_data={c: ":.3g" for c in ("p_value", "q_value") if c in df}
+        | {"episodes": True, "sig": False},
         category_orders={"family": FAMILIES},
         labels=_labels(names, "run", "episodes")
-        | {"spearman_rho": "Spearman ρ with ante reached", "family": ""},
+        | {
+            "spearman_rho": "Spearman ρ with ante reached",
+            "family": "",
+            "p_value": "p",
+            "q_value": "q (BH-adjusted p)",
+        },
         title="Which shop habits (per visit) go with deeper runs?",
     )
     fig.add_vline(x=0, line_color="grey")
     fig.update_xaxes(range=[-1, 1])
+    fig.update_traces(textposition="outside", cliponaxis=False)
     return _fig(fig, height=max(380, 34 * df["family"].nunique()))
 
 

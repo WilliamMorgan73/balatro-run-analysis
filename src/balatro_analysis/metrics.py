@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from itertools import combinations
 
+import numpy as np
 import pandas as pd
 
 from balatro_analysis import catalog
@@ -84,23 +85,27 @@ def summary(runs: list[Run]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+CURVE_METRICS = {"mean ante": "ante", "win rate": "won", "mean return": "return"}
+Z95 = 1.959964
+
+
 def learning_curve(runs: list[Run], window: int) -> pd.DataFrame:
-    """Rolling mean ante, win rate and return per episode."""
+    """Rolling mean ante, win rate and return per episode, each with a 95%
+    normal-approximation band (``<metric> low`` / ``<metric> high``: mean ± 1.96
+    standard errors over the window; zero width until the window has 2 episodes)."""
     frames = []
+    cols = list(CURVE_METRICS.values())
     for r in runs:
         e = r.episodes.sort_values("episode")
-        roll = e[["ante", "won", "return"]].rolling(window, min_periods=1).mean()
-        frames.append(
-            pd.DataFrame(
-                {
-                    "run": r.name,
-                    "episode": e["episode"].to_numpy(),
-                    "mean ante": roll["ante"].to_numpy(),
-                    "win rate": roll["won"].to_numpy(),
-                    "mean return": roll["return"].to_numpy(),
-                }
-            )
-        )
+        rolling = e[cols].astype(float).rolling(window, min_periods=1)
+        mean, std, n = rolling.mean(), rolling.std().fillna(0), rolling.count()
+        half = Z95 * std / np.sqrt(n)
+        frame = {"run": r.name, "episode": e["episode"].to_numpy()}
+        for label, col in CURVE_METRICS.items():
+            frame[label] = mean[col].to_numpy()
+            frame[f"{label} low"] = (mean[col] - half[col]).to_numpy()
+            frame[f"{label} high"] = (mean[col] + half[col]).to_numpy()
+        frames.append(pd.DataFrame(frame))
     return _concat(frames)
 
 

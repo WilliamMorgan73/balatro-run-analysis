@@ -16,7 +16,7 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
-from balatro_analysis import catalog
+from balatro_analysis import catalog, stats
 from balatro_analysis.loader import Run
 
 DEFAULT_INTEREST_CAP = 25
@@ -336,13 +336,20 @@ def outcome_correlations(econ: pd.DataFrame) -> pd.DataFrame:
         for col, label in OUTCOME_METRICS.items():
             if col not in g or g[col].notna().sum() < 3 or g[col].nunique() < 2:
                 continue
-            rho = g[[col, "ante"]].dropna().corr(method="spearman").iloc[0, 1]
+            pair = g[[col, "ante"]].dropna()
+            rho, p = stats.spearman(pair[col], pair["ante"])
             if np.isnan(rho):
                 continue
             rows.append(
-                {"run": run, "metric": label, "spearman_rho": rho, "episodes": g[col].notna().sum()}
+                {
+                    "run": run,
+                    "metric": label,
+                    "spearman_rho": rho,
+                    "p_value": p,
+                    "episodes": len(pair),
+                }
             )
-    return pd.DataFrame(rows)
+    return stats.with_q_values(pd.DataFrame(rows))
 
 
 # ---------------------------------------------------------------------------

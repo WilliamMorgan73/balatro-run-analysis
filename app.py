@@ -61,6 +61,7 @@ from balatro_analysis import (  # noqa: E402
     export,
     metrics,
     plots,
+    stats,
 )
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
 from balatro_analysis.loader import Run, find_runs, load_run  # noqa: E402
@@ -303,10 +304,53 @@ with tabs[0]:
                 names.column("s / ep"): st.column_config.NumberColumn(format="%.3f"),
             },
         )
+        ci = stats.summary_ci(runs)
+        if len(ci):
+            st.caption(
+                "95% confidence intervals of the mean: bootstrap for ante and return, "
+                "Wilson for win rate (stays sensible with no wins yet)."
+            )
+            num = st.column_config.NumberColumn(format="%.3f")
+            table(
+                ci,
+                column_config={names.column(c): num for c in ("mean", "ci_low", "ci_high", "std")},
+            )
+        if len(runs) > 1:
+            baseline = st.selectbox(
+                "Compare against baseline", [r.name for r in runs], key="baseline_run"
+            )
+            comparison = stats.compare(runs, baseline)
+            st.caption(
+                "Ante reached vs the baseline. **Unpaired**: difference in mean ante with a "
+                "bootstrap 95% CI, Mann-Whitney U and its rank-biserial effect size "
+                "(+1: this run always gets further). Win rate by Fisher's exact test. "
+                "**Paired**: episodes played on the same seed (and deck/stake) in both runs, "
+                "mean per-seed difference and Wilcoxon signed-rank. Pairing removes "
+                "seed-to-seed luck, so prefer it when the runs share seeds."
+            )
+            num = st.column_config.NumberColumn(format="%.3f")
+            pval = st.column_config.NumberColumn(format="%.2g")
+            table(
+                comparison,
+                column_config={
+                    names.column(c): num
+                    for c in (
+                        "mean_ante_diff",
+                        "diff_ci_low",
+                        "diff_ci_high",
+                        "rank_biserial",
+                        "win_rate_diff",
+                        "paired_mean_diff",
+                    )
+                }
+                | {names.column(c): pval for c in ("mann_whitney_p", "fisher_p", "wilcoxon_p")},
+            )
         curve = metrics.learning_curve(runs, window)
         if need(curve, "episodes for this selection"):
-            metric = st.radio("Curve", ["mean ante", "win rate", "mean return"], horizontal=True)
-            chart(plots.learning_curve(curve, metric, names), f"learning curve {metric}")
+            c1, c2 = st.columns([3, 1])
+            metric = c1.radio("Curve", list(metrics.CURVE_METRICS), horizontal=True)
+            band = c2.checkbox("95% band", value=True, help="mean ± 1.96 SE over the window")
+            chart(plots.learning_curve(curve, metric, names, band), f"learning curve {metric}")
             chart(plots.ante_distribution(metrics.ante_distribution(runs), names), "ante reached")
         with st.expander("Run configs"):
             for r in runs:
@@ -502,7 +546,9 @@ with tabs[2]:
                     st.caption(
                         "Spearman ρ between how often each kind of decision is made per shop "
                         "visit and the ante reached (+1: more of it goes with deeper runs). "
-                        "Per visit, because longer runs visit more shops."
+                        "Per visit, because longer runs visit more shops. "
+                        "\\* = significant at q < 0.05 (p-values Benjamini-Hochberg "
+                        "adjusted within each run); hover for p and q."
                     )
                     chart(plots.action_outcome_correlations(corr, names), "actions vs ante reached")
 
@@ -656,7 +702,9 @@ with tabs[3]:
                     st.caption(
                         "Spearman ρ between each habit and the ante reached (+1: more of it "
                         "goes with deeper runs). Totals grow with run length, so they "
-                        "correlate almost by construction; compare the per-visit measures."
+                        "correlate almost by construction; compare the per-visit measures. "
+                        "\\* = significant at q < 0.05 (p-values Benjamini-Hochberg "
+                        "adjusted within each run); hover for p and q."
                     )
                     chart(plots.outcome_correlations(corr, names), "economy vs ante reached")
                     choices = {

@@ -11,6 +11,7 @@ dependencies = [
     "kaleido>=1.5.0",
     "pandas>=3.0.6",
     "plotly>=7.1.0",
+    "scipy>=1.18.1",
     "streamlit>=1.66.0",
 ]
 

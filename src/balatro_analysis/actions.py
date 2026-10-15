@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from balatro_analysis import metrics
+from balatro_analysis import metrics, stats
 from balatro_analysis.loader import Run
 
 FAMILIES = [
@@ -294,11 +294,19 @@ def action_outcome_correlations(runs: list[Run]) -> pd.DataFrame:
             g = df[[fam, "ante"]].dropna()
             if len(g) < 3 or g[fam].nunique() < 2 or g["ante"].nunique() < 2:
                 continue
-            rho = g.corr(method="spearman").iloc[0, 1]
+            rho, p = stats.spearman(g[fam], g["ante"])
             if np.isnan(rho):
                 continue
-            rows.append({"run": r.name, "family": fam, "spearman_rho": rho, "episodes": len(g)})
-    return pd.DataFrame(rows)
+            rows.append(
+                {
+                    "run": r.name,
+                    "family": fam,
+                    "spearman_rho": rho,
+                    "p_value": p,
+                    "episodes": len(g),
+                }
+            )
+    return stats.with_q_values(pd.DataFrame(rows))
 
 
 # ---------------------------------------------------------------------------

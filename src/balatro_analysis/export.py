@@ -19,7 +19,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-from balatro_analysis import actions, economy, metrics
+from balatro_analysis import actions, economy, metrics, stats
 from balatro_analysis.loader import Run
 from balatro_analysis.names import DEFAULT_KEYS, Names
 
@@ -57,6 +57,9 @@ def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[st
     """Every table the dashboard shows, keyed by file stem."""
     tables: dict[str, pd.DataFrame] = {
         "summary": with_names(metrics.summary(runs), {"decks": "items", "stakes": "stakes"}),
+        "summary_ci": stats.summary_ci(runs),
+        # baseline = the first selected run; the dashboard lets you pick another
+        "run_comparison": stats.compare(runs, runs[0].name) if runs else pd.DataFrame(),
         "by_deck": with_names(metrics.by_deck(runs)),
         "learning_curve": metrics.learning_curve(runs, window),
         "ante_distribution": metrics.ante_distribution(runs),

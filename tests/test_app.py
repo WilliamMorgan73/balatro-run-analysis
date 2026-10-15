@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import pytest
@@ -288,3 +289,12 @@ def test_actions_availability_note_for_old_runs(tmp_path):
     at = _run(tmp_path, tab="Actions", actions="Availability")
     assert not at.exception
     assert any("log_version 3" in i.value for i in at.info)
+
+
+def test_app_compares_two_runs(runs_dir, tmp_path):
+    for name in ("run_small", "run_copy"):
+        shutil.copytree(runs_dir / "run_small", tmp_path / name)
+    at = _run(tmp_path)
+    at.sidebar.multiselect[0].set_value(["run_copy", "run_small"]).run()
+    assert not at.exception
+    assert any(s.label == "Compare against baseline" for s in at.selectbox)

@@ -66,6 +66,7 @@ Sidebar → **Export**, always for the current run/episode/deck/stake selection:
 - **Data (ZIP of CSVs)**: `runs/<run>/{episodes,steps,rounds}.csv` plus `tables/*.csv`
   for every table and chart. Each key column has a `<column>_name` twin, so the files work for
   both analysis and slides, whatever the toggle says. A `README.txt` records the selection.
+  `run_comparison.csv` uses the first selected run as the baseline.
 - **All charts (ZIP)**: every chart currently shown, as PNG (3200x1800) and/or SVG, in a
   light theme for slides/LaTeX. Each chart also has its own **⬇ Export chart** button.
 
@@ -106,7 +107,11 @@ moves them back to the ante they were played in.
 
 ## Tabs
 
-- **Overview**: summary per run, rolling learning curve (ante / win rate / return), ante-reached distribution
+- **Overview**: summary per run; 95% CIs of mean ante, win rate (Wilson) and return; with
+  two or more runs, a comparison against a chosen baseline (difference in mean ante with a
+  bootstrap CI, Mann-Whitney U + rank-biserial effect size, Fisher's exact on wins, and a
+  Wilcoxon signed-rank test on episodes both runs played on the same seed/deck/stake);
+  rolling learning curve (ante / win rate / return) with a 95% band; ante-reached distribution
 - **Decks**: deck cards with episodes and mean ante; mean ante by deck and stake per run
 - **Actions**: KPI strip (decisions per visit, visits leaving at once, visits with a buy, most
   common first action) and sub-tabs:
@@ -120,7 +125,7 @@ moves them back to the ante they were played in.
   - *Availability* †: how often each action was legal and chosen when legal; preference vs a
     uniform-random agent; legal actions per decision
   - *Actions vs outcome*: Spearman correlation of each kind of decision per visit with ante
-    reached
+    reached, with p-values Benjamini-Hochberg adjusted within each run (\* = q < 0.05)
 
   † needs runs from the current training script (`log_version` 3 in `config.json`)
 - **Economy**: KPI strip (spend, selling, rerolls, money in/out of the shop, exits at the interest
@@ -133,7 +138,8 @@ moves them back to the ante they were played in.
   - *Rerolls & prices*: rerolls per visit, reroll spend by ante, price paid by category, joker
     price by ante
   - *Economy vs outcome*: Spearman correlation of each habit with ante reached (per-visit
-    measures, since totals grow with run length), and any habit by ante reached
+    measures, since totals grow with run length), BH-adjusted like the actions one, and any
+    habit by ante reached
   - *Cash-out income* \*: blind reward, interest, unused hands, joker $ and rent per beaten blind;
     interest earned vs the maximum
   - *Shop offers* \*: what was offered, affordable and bought per category; offered vs paid
@@ -154,6 +160,7 @@ app.py                          Streamlit UI only
 src/balatro_analysis/loader.py  find_runs / load_run -> Run
 src/balatro_analysis/metrics.py pure pandas metrics (testable without Streamlit)
 src/balatro_analysis/economy.py economy metrics (shop visits, spending, interest, offers)
+src/balatro_analysis/stats.py   confidence intervals, run-vs-baseline tests, p/q-values
 src/balatro_analysis/plots.py   Plotly figure builders
 src/balatro_analysis/catalog.py display names for game keys (centers, blinds)
 src/balatro_analysis/names.py   in-game names vs exact keys (the sidebar toggle)
