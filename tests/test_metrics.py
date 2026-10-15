@@ -79,7 +79,7 @@ def test_score_ratio_and_deaths(run):
 def test_episode_views(run):
     t = metrics.episode_timeline(run, 0)
     assert t["action_name"].tolist() == ["buy_card_0", "skip", "buy_card_1", "skip"]
-    assert t.iloc[3]["jokers_before"] == "j_joker, j_greedy_joker"
+    assert t.iloc[3]["jokers_before"] == ["j_joker", "j_greedy_joker"]
     assert len(metrics.episode_rounds(run, 0)) == 3
 
 
@@ -105,14 +105,15 @@ def test_filter_by_deck_and_stake(run):
 def test_by_deck(run):
     d = metrics.by_deck([run]).set_index(["deck", "stake"])
     assert d.loc[("b_red", "1"), "mean_ante"] == 2
-    assert d.loc[("b_blue", "1"), "deck name"] == "Blue Deck"
     assert d["episodes"].sum() == 3
 
 
 def test_summary_lists_decks(run):
-    assert metrics.summary([run]).loc[0, "decks"] == "Blue Deck, Red Deck"
+    s = metrics.summary([run]).iloc[0]
+    assert s["decks"] == "b_blue;b_red"
+    assert s["stakes"] == "1;2"
 
 
-def test_most_bought_has_names(run):
-    top = metrics.most_bought([run]).set_index("joker")
-    assert top.loc["j_greedy_joker", "name"] == "Greedy Joker"
+def test_metrics_are_key_only(run):
+    assert list(metrics.most_bought([run]).columns) == ["run", "joker", "bought"]
+    assert "deck name" not in metrics.by_deck([run])

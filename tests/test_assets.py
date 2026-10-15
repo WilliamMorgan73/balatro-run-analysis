@@ -15,7 +15,9 @@ def test_names():
     assert catalog.name("j_greedy_joker") == "Greedy Joker"
     assert catalog.name("j_caino") == "Canio"
     assert catalog.name("b_black") == "Black Deck"
-    assert catalog.name("p_buffoon_normal_1") == "Buffoon Normal 1"  # not in catalog
+    assert catalog.name("p_buffoon_normal_1") == "Buffoon Pack"
+    assert catalog.name("bl_hook") == "The Hook"
+    assert catalog.name("x_not_real_key") == "Not Real Key"  # unknown: prettified
     assert catalog.name(None) == ""
 
 

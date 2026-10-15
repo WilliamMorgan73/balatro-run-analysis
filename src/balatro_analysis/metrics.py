@@ -11,7 +11,6 @@ from itertools import combinations
 
 import pandas as pd
 
-from balatro_analysis import catalog
 from balatro_analysis.loader import Run
 
 BUY_ACTIONS = ("buy_card_0", "buy_card_1", "buy_pack_0", "buy_pack_1", "buy_voucher")
@@ -69,8 +68,8 @@ def summary(runs: list[Run]) -> pd.DataFrame:
                 "run": r.name,
                 "play agent": r.config.get("play_agent", "?"),
                 "shop agent": r.config.get("shop_agent", "?"),
-                "decks": ", ".join(catalog.name(d) for d in sorted(e["deck"].unique())),
-                "stakes": ", ".join(sorted(e["stake"].unique())),
+                "decks": ";".join(sorted(e["deck"].unique())),
+                "stakes": ";".join(sorted(e["stake"].unique())),
                 "episodes": len(e),
                 "mean ante": e["ante"].mean() if len(e) else float("nan"),
                 "max ante": e["ante"].max() if len(e) else float("nan"),
@@ -115,7 +114,6 @@ def by_deck(runs: list[Run]) -> pd.DataFrame:
             max_ante=("ante", "max"),
             win_rate=("won", "mean"),
         )
-        g["deck name"] = g["deck"].map(catalog.name)
         frames.append(g.assign(run=r.name))
     return _concat(frames)
 
@@ -224,7 +222,6 @@ def most_bought(runs: list[Run], top: int = 20) -> pd.DataFrame:
                 {
                     "run": r.name,
                     "joker": counts.index,
-                    "name": [catalog.name(k) for k in counts.index],
                     "bought": counts.values,
                 }
             )
@@ -336,8 +333,6 @@ def episode_timeline(run: Run, episode: int) -> pd.DataFrame:
     if run.steps is None:
         return pd.DataFrame()
     s = run.steps[run.steps["episode"] == episode].sort_values("step").copy()
-    s["jokers_before"] = s["jokers_before"].apply(", ".join)
-    s["consumables_before"] = s["consumables_before"].apply(", ".join)
     cols = [
         "step",
         "ante",

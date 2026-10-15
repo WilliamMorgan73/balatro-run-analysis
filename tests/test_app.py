@@ -71,3 +71,52 @@ def test_app_no_runs(tmp_path):
     at = _run(tmp_path)
     assert not at.exception
     assert at.sidebar.warning
+
+
+def test_names_toggle(runs_dir):
+    at = _run(runs_dir)
+    episode = next(s for s in at.selectbox if s.label == "Episode")
+    assert "Red Deck" in episode.options[0]
+    at.toggle(key="pretty").set_value(False).run()
+    assert not at.exception
+    episode = next(s for s in at.selectbox if s.label == "Episode")
+    assert episode.options[0] == "0  (b_red, ante 2, 4 shop steps)"
+    decks = next(m for m in at.sidebar.multiselect if m.label == "Decks")
+    assert decks.format_func("b_red") == "b_red"
+
+
+def test_names_query_param(runs_dir):
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.query_params["names"] = "keys"
+    at.run()
+    assert at.toggle(key="pretty").value is False
+
+
+def test_export_buttons_present(runs_dir):
+    at = _run(runs_dir)
+    assert not at.exception
+    labels = [b.label for b in at.get("download_button")]
+    assert "Data (ZIP of CSVs)" in labels
+    assert any(lbl.startswith("All ") and lbl.endswith("charts (ZIP)") for lbl in labels)
+    assert labels.count("PNG") == labels.count("SVG") >= 5
+
+
+def test_stale_modules_reloaded(runs_dir, monkeypatch):
+    """A server started before a package change must not keep old modules
+    (the 'unexpected keyword argument decks' bug)."""
+    from balatro_analysis import metrics
+
+    at = _run(runs_dir)
+    real = metrics.filter_episodes
+
+    def old_filter(run, start, end):  # the pre-deck-filter signature
+        raise AssertionError("stale module used")
+
+    monkeypatch.setattr(metrics, "filter_episodes", old_filter)
+    import balatro_analysis
+
+    del balatro_analysis._app_mtime  # like a server started before this guard existed
+    at.run()
+    assert not at.exception
+    assert metrics.filter_episodes.__code__ is not old_filter.__code__
+    assert metrics.filter_episodes.__name__ == real.__name__

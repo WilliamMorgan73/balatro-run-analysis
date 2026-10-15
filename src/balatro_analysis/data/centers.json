@@ -127,6 +127,238 @@
    "y": 4
   }
  },
+ "c_ankh": {
+  "name": "Ankh",
+  "set": "Spectral"
+ },
+ "c_aura": {
+  "name": "Aura",
+  "set": "Spectral"
+ },
+ "c_base": {
+  "name": "Default Base",
+  "set": "Default"
+ },
+ "c_black_hole": {
+  "name": "Black Hole",
+  "set": "Spectral"
+ },
+ "c_ceres": {
+  "name": "Ceres",
+  "set": "Planet"
+ },
+ "c_chariot": {
+  "name": "The Chariot",
+  "set": "Tarot"
+ },
+ "c_cryptid": {
+  "name": "Cryptid",
+  "set": "Spectral"
+ },
+ "c_death": {
+  "name": "Death",
+  "set": "Tarot"
+ },
+ "c_deja_vu": {
+  "name": "Deja Vu",
+  "set": "Spectral"
+ },
+ "c_devil": {
+  "name": "The Devil",
+  "set": "Tarot"
+ },
+ "c_earth": {
+  "name": "Earth",
+  "set": "Planet"
+ },
+ "c_ectoplasm": {
+  "name": "Ectoplasm",
+  "set": "Spectral"
+ },
+ "c_emperor": {
+  "name": "The Emperor",
+  "set": "Tarot"
+ },
+ "c_empress": {
+  "name": "The Empress",
+  "set": "Tarot"
+ },
+ "c_eris": {
+  "name": "Eris",
+  "set": "Planet"
+ },
+ "c_familiar": {
+  "name": "Familiar",
+  "set": "Spectral"
+ },
+ "c_fool": {
+  "name": "The Fool",
+  "set": "Tarot"
+ },
+ "c_grim": {
+  "name": "Grim",
+  "set": "Spectral"
+ },
+ "c_hanged_man": {
+  "name": "The Hanged Man",
+  "set": "Tarot"
+ },
+ "c_heirophant": {
+  "name": "The Hierophant",
+  "set": "Tarot"
+ },
+ "c_hermit": {
+  "name": "The Hermit",
+  "set": "Tarot"
+ },
+ "c_hex": {
+  "name": "Hex",
+  "set": "Spectral"
+ },
+ "c_high_priestess": {
+  "name": "The High Priestess",
+  "set": "Tarot"
+ },
+ "c_immolate": {
+  "name": "Immolate",
+  "set": "Spectral"
+ },
+ "c_incantation": {
+  "name": "Incantation",
+  "set": "Spectral"
+ },
+ "c_judgement": {
+  "name": "Judgement",
+  "set": "Tarot"
+ },
+ "c_jupiter": {
+  "name": "Jupiter",
+  "set": "Planet"
+ },
+ "c_justice": {
+  "name": "Justice",
+  "set": "Tarot"
+ },
+ "c_lovers": {
+  "name": "The Lovers",
+  "set": "Tarot"
+ },
+ "c_magician": {
+  "name": "The Magician",
+  "set": "Tarot"
+ },
+ "c_mars": {
+  "name": "Mars",
+  "set": "Planet"
+ },
+ "c_medium": {
+  "name": "Medium",
+  "set": "Spectral"
+ },
+ "c_mercury": {
+  "name": "Mercury",
+  "set": "Planet"
+ },
+ "c_moon": {
+  "name": "The Moon",
+  "set": "Tarot"
+ },
+ "c_neptune": {
+  "name": "Neptune",
+  "set": "Planet"
+ },
+ "c_ouija": {
+  "name": "Ouija",
+  "set": "Spectral"
+ },
+ "c_planet_x": {
+  "name": "Planet X",
+  "set": "Planet"
+ },
+ "c_pluto": {
+  "name": "Pluto",
+  "set": "Planet"
+ },
+ "c_saturn": {
+  "name": "Saturn",
+  "set": "Planet"
+ },
+ "c_sigil": {
+  "name": "Sigil",
+  "set": "Spectral"
+ },
+ "c_soul": {
+  "name": "The Soul",
+  "set": "Spectral"
+ },
+ "c_star": {
+  "name": "The Star",
+  "set": "Tarot"
+ },
+ "c_strength": {
+  "name": "Strength",
+  "set": "Tarot"
+ },
+ "c_sun": {
+  "name": "The Sun",
+  "set": "Tarot"
+ },
+ "c_talisman": {
+  "name": "Talisman",
+  "set": "Spectral"
+ },
+ "c_temperance": {
+  "name": "Temperance",
+  "set": "Tarot"
+ },
+ "c_tower": {
+  "name": "The Tower",
+  "set": "Tarot"
+ },
+ "c_trance": {
+  "name": "Trance",
+  "set": "Spectral"
+ },
+ "c_uranus": {
+  "name": "Uranus",
+  "set": "Planet"
+ },
+ "c_venus": {
+  "name": "Venus",
+  "set": "Planet"
+ },
+ "c_wheel_of_fortune": {
+  "name": "The Wheel of Fortune",
+  "set": "Tarot"
+ },
+ "c_world": {
+  "name": "The World",
+  "set": "Tarot"
+ },
+ "c_wraith": {
+  "name": "Wraith",
+  "set": "Spectral"
+ },
+ "e_base": {
+  "name": "Base",
+  "set": "Edition"
+ },
+ "e_foil": {
+  "name": "Foil",
+  "set": "Edition"
+ },
+ "e_holo": {
+  "name": "Holographic",
+  "set": "Edition"
+ },
+ "e_negative": {
+  "name": "Negative",
+  "set": "Edition"
+ },
+ "e_polychrome": {
+  "name": "Polychrome",
+  "set": "Edition"
+ },
  "j_8_ball": {
   "name": "8 Ball",
   "set": "Joker",
@@ -1350,5 +1582,293 @@
    "x": 3,
    "y": 0
   }
+ },
+ "m_bonus": {
+  "name": "Bonus",
+  "set": "Enhanced"
+ },
+ "m_glass": {
+  "name": "Glass Card",
+  "set": "Enhanced"
+ },
+ "m_gold": {
+  "name": "Gold Card",
+  "set": "Enhanced"
+ },
+ "m_lucky": {
+  "name": "Lucky Card",
+  "set": "Enhanced"
+ },
+ "m_mult": {
+  "name": "Mult",
+  "set": "Enhanced"
+ },
+ "m_steel": {
+  "name": "Steel Card",
+  "set": "Enhanced"
+ },
+ "m_stone": {
+  "name": "Stone Card",
+  "set": "Enhanced"
+ },
+ "m_wild": {
+  "name": "Wild Card",
+  "set": "Enhanced"
+ },
+ "p_arcana_jumbo_1": {
+  "name": "Jumbo Arcana Pack",
+  "set": "Booster"
+ },
+ "p_arcana_jumbo_2": {
+  "name": "Jumbo Arcana Pack",
+  "set": "Booster"
+ },
+ "p_arcana_mega_1": {
+  "name": "Mega Arcana Pack",
+  "set": "Booster"
+ },
+ "p_arcana_mega_2": {
+  "name": "Mega Arcana Pack",
+  "set": "Booster"
+ },
+ "p_arcana_normal_1": {
+  "name": "Arcana Pack",
+  "set": "Booster"
+ },
+ "p_arcana_normal_2": {
+  "name": "Arcana Pack",
+  "set": "Booster"
+ },
+ "p_arcana_normal_3": {
+  "name": "Arcana Pack",
+  "set": "Booster"
+ },
+ "p_arcana_normal_4": {
+  "name": "Arcana Pack",
+  "set": "Booster"
+ },
+ "p_buffoon_jumbo_1": {
+  "name": "Jumbo Buffoon Pack",
+  "set": "Booster"
+ },
+ "p_buffoon_mega_1": {
+  "name": "Mega Buffoon Pack",
+  "set": "Booster"
+ },
+ "p_buffoon_normal_1": {
+  "name": "Buffoon Pack",
+  "set": "Booster"
+ },
+ "p_buffoon_normal_2": {
+  "name": "Buffoon Pack",
+  "set": "Booster"
+ },
+ "p_celestial_jumbo_1": {
+  "name": "Jumbo Celestial Pack",
+  "set": "Booster"
+ },
+ "p_celestial_jumbo_2": {
+  "name": "Jumbo Celestial Pack",
+  "set": "Booster"
+ },
+ "p_celestial_mega_1": {
+  "name": "Mega Celestial Pack",
+  "set": "Booster"
+ },
+ "p_celestial_mega_2": {
+  "name": "Mega Celestial Pack",
+  "set": "Booster"
+ },
+ "p_celestial_normal_1": {
+  "name": "Celestial Pack",
+  "set": "Booster"
+ },
+ "p_celestial_normal_2": {
+  "name": "Celestial Pack",
+  "set": "Booster"
+ },
+ "p_celestial_normal_3": {
+  "name": "Celestial Pack",
+  "set": "Booster"
+ },
+ "p_celestial_normal_4": {
+  "name": "Celestial Pack",
+  "set": "Booster"
+ },
+ "p_spectral_jumbo_1": {
+  "name": "Jumbo Spectral Pack",
+  "set": "Booster"
+ },
+ "p_spectral_mega_1": {
+  "name": "Mega Spectral Pack",
+  "set": "Booster"
+ },
+ "p_spectral_normal_1": {
+  "name": "Spectral Pack",
+  "set": "Booster"
+ },
+ "p_spectral_normal_2": {
+  "name": "Spectral Pack",
+  "set": "Booster"
+ },
+ "p_standard_jumbo_1": {
+  "name": "Jumbo Standard Pack",
+  "set": "Booster"
+ },
+ "p_standard_jumbo_2": {
+  "name": "Jumbo Standard Pack",
+  "set": "Booster"
+ },
+ "p_standard_mega_1": {
+  "name": "Mega Standard Pack",
+  "set": "Booster"
+ },
+ "p_standard_mega_2": {
+  "name": "Mega Standard Pack",
+  "set": "Booster"
+ },
+ "p_standard_normal_1": {
+  "name": "Standard Pack",
+  "set": "Booster"
+ },
+ "p_standard_normal_2": {
+  "name": "Standard Pack",
+  "set": "Booster"
+ },
+ "p_standard_normal_3": {
+  "name": "Standard Pack",
+  "set": "Booster"
+ },
+ "p_standard_normal_4": {
+  "name": "Standard Pack",
+  "set": "Booster"
+ },
+ "v_antimatter": {
+  "name": "Antimatter",
+  "set": "Voucher"
+ },
+ "v_blank": {
+  "name": "Blank",
+  "set": "Voucher"
+ },
+ "v_clearance_sale": {
+  "name": "Clearance Sale",
+  "set": "Voucher"
+ },
+ "v_crystal_ball": {
+  "name": "Crystal Ball",
+  "set": "Voucher"
+ },
+ "v_directors_cut": {
+  "name": "Director's Cut",
+  "set": "Voucher"
+ },
+ "v_glow_up": {
+  "name": "Glow Up",
+  "set": "Voucher"
+ },
+ "v_grabber": {
+  "name": "Grabber",
+  "set": "Voucher"
+ },
+ "v_hieroglyph": {
+  "name": "Hieroglyph",
+  "set": "Voucher"
+ },
+ "v_hone": {
+  "name": "Hone",
+  "set": "Voucher"
+ },
+ "v_illusion": {
+  "name": "Illusion",
+  "set": "Voucher"
+ },
+ "v_liquidation": {
+  "name": "Liquidation",
+  "set": "Voucher"
+ },
+ "v_magic_trick": {
+  "name": "Magic Trick",
+  "set": "Voucher"
+ },
+ "v_money_tree": {
+  "name": "Money Tree",
+  "set": "Voucher"
+ },
+ "v_nacho_tong": {
+  "name": "Nacho Tong",
+  "set": "Voucher"
+ },
+ "v_observatory": {
+  "name": "Observatory",
+  "set": "Voucher"
+ },
+ "v_omen_globe": {
+  "name": "Omen Globe",
+  "set": "Voucher"
+ },
+ "v_overstock_norm": {
+  "name": "Overstock",
+  "set": "Voucher"
+ },
+ "v_overstock_plus": {
+  "name": "Overstock Plus",
+  "set": "Voucher"
+ },
+ "v_paint_brush": {
+  "name": "Paint Brush",
+  "set": "Voucher"
+ },
+ "v_palette": {
+  "name": "Palette",
+  "set": "Voucher"
+ },
+ "v_petroglyph": {
+  "name": "Petroglyph",
+  "set": "Voucher"
+ },
+ "v_planet_merchant": {
+  "name": "Planet Merchant",
+  "set": "Voucher"
+ },
+ "v_planet_tycoon": {
+  "name": "Planet Tycoon",
+  "set": "Voucher"
+ },
+ "v_recyclomancy": {
+  "name": "Recyclomancy",
+  "set": "Voucher"
+ },
+ "v_reroll_glut": {
+  "name": "Reroll Glut",
+  "set": "Voucher"
+ },
+ "v_reroll_surplus": {
+  "name": "Reroll Surplus",
+  "set": "Voucher"
+ },
+ "v_retcon": {
+  "name": "Retcon",
+  "set": "Voucher"
+ },
+ "v_seed_money": {
+  "name": "Seed Money",
+  "set": "Voucher"
+ },
+ "v_tarot_merchant": {
+  "name": "Tarot Merchant",
+  "set": "Voucher"
+ },
+ "v_tarot_tycoon": {
+  "name": "Tarot Tycoon",
+  "set": "Voucher"
+ },
+ "v_telescope": {
+  "name": "Telescope",
+  "set": "Voucher"
+ },
+ "v_wasteful": {
+  "name": "Wasteful",
+  "set": "Voucher"
  }
 }

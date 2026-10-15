@@ -17,6 +17,26 @@ dialog: kdialog, zenity, or Tk as a fallback) or type a path. Pick any number of
 to overlay, filter by deck and stake, and use **Reload runs** after a training run
 finishes.
 
+## Names: presenting vs analysing
+
+The **In-game names** toggle (top of the sidebar) switches every label between the
+names shown in the game ("Greedy Joker", "Black Deck", "The Hook", "Buy card 1", "$ before")
+and the exact keys (`j_greedy_joker`, `b_black`, `bl_hook`, `buy_card_0`, `dollars_before`).
+Open `http://localhost:8501/?names=keys` to start in key mode.
+
+## Export
+
+Sidebar → **Export**, always for the current run/episode/deck/stake selection:
+
+- **Data (ZIP of CSVs)**: `runs/<run>/{episodes,steps,rounds}.csv` plus `tables/*.csv`
+  for every table and chart. Each key column has a `<column>_name` twin, so the files work for
+  both analysis and slides, whatever the toggle says. A `README.txt` records the selection.
+- **All charts (ZIP)**: every chart currently shown, as PNG (3200x1800) and/or SVG, in a
+  light theme for slides/LaTeX. Each chart also has its own **⬇ Export chart** button.
+
+Chart rendering uses kaleido with your local Chrome/Chromium. If none is found the chart buttons
+say so; `uv run kaleido_get_chrome` downloads one.
+
 ## Joker and deck icons
 
 Icons are cut at runtime from **your own copy of Balatro**; no game art is stored in
@@ -24,7 +44,7 @@ this repo. The game is found automatically in Steam libraries (Linux, Flatpak, m
 Windows), or set `BALATRO_PATH` / the *Game assets* sidebar field to the install folder
 or `Balatro.exe`. Without the game the dashboard shows names only.
 
-Names and sprite positions come from `src/balatro_analysis/data/centers.json`, generated
+Names and sprite positions come from `src/balatro_analysis/data/{centers,blinds}.json`, generated
 from jackdaw's data by `uv run python scripts/sync_centers.py`.
 
 ## Run format
@@ -56,13 +76,19 @@ app.py                          Streamlit UI only
 src/balatro_analysis/loader.py  find_runs / load_run -> Run
 src/balatro_analysis/metrics.py pure pandas metrics (testable without Streamlit)
 src/balatro_analysis/plots.py   Plotly figure builders
-src/balatro_analysis/catalog.py joker/deck display names
+src/balatro_analysis/catalog.py display names for game keys (centers, blinds)
+src/balatro_analysis/names.py   in-game names vs exact keys (the sidebar toggle)
+src/balatro_analysis/export.py  data ZIP and PNG/SVG chart export
 src/balatro_analysis/sprites.py icons from the local game install
 src/balatro_analysis/picker.py  native folder dialog
 tests/                          pytest + Streamlit AppTest on a small fixture run
 ```
 
 ```bash
-uv run pytest
+uv run pytest            # fast suite
+uv run pytest -m slow    # also renders real PNG/SVG with kaleido
 uv run ruff check .
 ```
+
+The app reloads its own package modules when they change, so a server left running
+picks up `git pull`s without a restart.

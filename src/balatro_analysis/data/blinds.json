@@ -1,0 +1,122 @@
+{
+ "bl_arm": {
+  "name": "The Arm",
+  "boss": true
+ },
+ "bl_big": {
+  "name": "Big Blind",
+  "boss": false
+ },
+ "bl_club": {
+  "name": "The Club",
+  "boss": true
+ },
+ "bl_eye": {
+  "name": "The Eye",
+  "boss": true
+ },
+ "bl_final_acorn": {
+  "name": "Amber Acorn",
+  "boss": true
+ },
+ "bl_final_bell": {
+  "name": "Cerulean Bell",
+  "boss": true
+ },
+ "bl_final_heart": {
+  "name": "Crimson Heart",
+  "boss": true
+ },
+ "bl_final_leaf": {
+  "name": "Verdant Leaf",
+  "boss": true
+ },
+ "bl_final_vessel": {
+  "name": "Violet Vessel",
+  "boss": true
+ },
+ "bl_fish": {
+  "name": "The Fish",
+  "boss": true
+ },
+ "bl_flint": {
+  "name": "The Flint",
+  "boss": true
+ },
+ "bl_goad": {
+  "name": "The Goad",
+  "boss": true
+ },
+ "bl_head": {
+  "name": "The Head",
+  "boss": true
+ },
+ "bl_hook": {
+  "name": "The Hook",
+  "boss": true
+ },
+ "bl_house": {
+  "name": "The House",
+  "boss": true
+ },
+ "bl_manacle": {
+  "name": "The Manacle",
+  "boss": true
+ },
+ "bl_mark": {
+  "name": "The Mark",
+  "boss": true
+ },
+ "bl_mouth": {
+  "name": "The Mouth",
+  "boss": true
+ },
+ "bl_needle": {
+  "name": "The Needle",
+  "boss": true
+ },
+ "bl_ox": {
+  "name": "The Ox",
+  "boss": true
+ },
+ "bl_pillar": {
+  "name": "The Pillar",
+  "boss": true
+ },
+ "bl_plant": {
+  "name": "The Plant",
+  "boss": true
+ },
+ "bl_psychic": {
+  "name": "The Psychic",
+  "boss": true
+ },
+ "bl_serpent": {
+  "name": "The Serpent",
+  "boss": true
+ },
+ "bl_small": {
+  "name": "Small Blind",
+  "boss": false
+ },
+ "bl_tooth": {
+  "name": "The Tooth",
+  "boss": true
+ },
+ "bl_wall": {
+  "name": "The Wall",
+  "boss": true
+ },
+ "bl_water": {
+  "name": "The Water",
+  "boss": true
+ },
+ "bl_wheel": {
+  "name": "The Wheel",
+  "boss": true
+ },
+ "bl_window": {
+  "name": "The Window",
+  "boss": true
+ }
+}

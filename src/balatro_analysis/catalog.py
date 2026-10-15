@@ -1,6 +1,7 @@
-"""Display names and sprite positions for jokers and decks.
+"""Display names for game keys, and sprite positions for jokers and decks.
 
-Data comes from ``data/centers.json`` (regenerate with ``scripts/sync_centers.py``).
+Data comes from ``data/centers.json`` and ``data/blinds.json`` (regenerate with
+``scripts/sync_centers.py``).
 """
 
 from __future__ import annotations
@@ -21,9 +22,18 @@ STAKES = {
 }
 
 
+def _data(name: str) -> dict[str, dict]:
+    return json.loads(resources.files("balatro_analysis").joinpath(f"data/{name}").read_text())
+
+
 @cache
 def centers() -> dict[str, dict]:
-    return json.loads(resources.files("balatro_analysis").joinpath("data/centers.json").read_text())
+    return _data("centers.json")
+
+
+@cache
+def blinds() -> dict[str, dict]:
+    return _data("blinds.json")
 
 
 # Where the game's internal name differs from what it displays
@@ -36,7 +46,7 @@ def name(key: str | None) -> str:
         return ""
     if key in DISPLAY_OVERRIDES:
         return DISPLAY_OVERRIDES[key]
-    entry = centers().get(key)
+    entry = centers().get(key) or blinds().get(key)
     if entry:
         return entry["name"]
     # Unknown key (packs, tarots, ...): strip the prefix and title-case it
