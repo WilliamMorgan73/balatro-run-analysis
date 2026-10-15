@@ -1,4 +1,4 @@
-episode,ante,won,return,shop_steps,shops_visited,dollars_spent,seconds,seed,final_round,final_dollars,final_jokers,buy_card_0,buy_card_1,buy_pack_0,buy_pack_1,buy_voucher,sell_joker_0,sell_joker_1,sell_joker_2,sell_joker_3,sell_joker_4,sell_joker_5,sell_cons_0,sell_cons_1,use_cons_0,use_cons_1,reroll,skip
-0,2,0,1.0,4,2,11,0.1,TEST_0,4,6,j_joker;j_greedy_joker,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2
-1,1,0,0.0,4,1,9,0.1,TEST_1,2,2,j_banner,2,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1
-2,1,0,0.0,0,0,0,0.05,TEST_2,1,4,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+episode,ante,won,return,shop_steps,shops_visited,dollars_spent,seconds,seed,deck,stake,final_round,final_dollars,final_jokers,buy_card_0,buy_card_1,buy_pack_0,buy_pack_1,buy_voucher,sell_joker_0,sell_joker_1,sell_joker_2,sell_joker_3,sell_joker_4,sell_joker_5,sell_cons_0,sell_cons_1,use_cons_0,use_cons_1,reroll,skip
+0,2,0,1.0,4,2,11,0.1,TEST_0,b_red,1,4,6,j_joker;j_greedy_joker,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2
+1,1,0,0.0,4,1,9,0.1,TEST_1,b_blue,1,2,2,j_banner,2,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1
+2,1,0,0.0,0,0,0,0.05,TEST_2,b_red,2,1,4,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

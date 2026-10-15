@@ -91,3 +91,28 @@ def test_metrics_without_step_logs(episodes_only_dir):
     assert metrics.score_ratio(runs).empty
     assert metrics.sell_then_buy(run).empty
     assert not metrics.action_frequency(runs).empty  # falls back to episodes.csv columns
+
+
+def test_filter_by_deck_and_stake(run):
+    blue = metrics.filter_episodes(run, 0, 99, decks=["b_blue"])
+    assert blue.episodes["episode"].tolist() == [1]
+    assert set(blue.steps["episode"]) == {1}
+    red_white = metrics.filter_episodes(run, 0, 99, decks=["b_red"], stakes=["1"])
+    assert red_white.episodes["episode"].tolist() == [0]
+    assert metrics.filter_episodes(run, 0, 99, decks=[]).episodes.empty
+
+
+def test_by_deck(run):
+    d = metrics.by_deck([run]).set_index(["deck", "stake"])
+    assert d.loc[("b_red", "1"), "mean_ante"] == 2
+    assert d.loc[("b_blue", "1"), "deck name"] == "Blue Deck"
+    assert d["episodes"].sum() == 3
+
+
+def test_summary_lists_decks(run):
+    assert metrics.summary([run]).loc[0, "decks"] == "Blue Deck, Red Deck"
+
+
+def test_most_bought_has_names(run):
+    top = metrics.most_bought([run]).set_index("joker")
+    assert top.loc["j_greedy_joker", "name"] == "Greedy Joker"

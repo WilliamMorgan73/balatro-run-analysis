@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
+UNKNOWN = "unknown"
+
 
 @dataclass
 class Run:
@@ -51,6 +53,14 @@ def load_run(path: str | Path, root: str | Path | None = None) -> Run:
 
     config_path = path / "config.json"
     config = json.loads(config_path.read_text()) if config_path.is_file() else {}
+
+    # Older runs don't log deck/stake per episode: fill from config if it names
+    # exactly one, else mark unknown.
+    for col, cfg_key in (("deck", "decks"), ("stake", "stakes")):
+        if col not in episodes:
+            values = config.get(cfg_key) or []
+            episodes[col] = values[0] if len(values) == 1 else UNKNOWN
+        episodes[col] = episodes[col].fillna(UNKNOWN).astype(str)
 
     steps = _read_jsonl(path / "steps.jsonl")
     rounds = _read_jsonl(path / "rounds.jsonl")

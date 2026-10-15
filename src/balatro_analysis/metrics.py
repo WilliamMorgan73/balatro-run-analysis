@@ -11,19 +11,34 @@ from itertools import combinations
 
 import pandas as pd
 
+from balatro_analysis import catalog
 from balatro_analysis.loader import Run
 
 BUY_ACTIONS = ("buy_card_0", "buy_card_1", "buy_pack_0", "buy_pack_1", "buy_voucher")
 SELL_JOKER_PREFIX = "sell_joker_"
 
 
-def filter_episodes(run: Run, start: int, end: int) -> Run:
-    """Restrict a run (all its tables) to episodes in ``[start, end]``."""
+def filter_episodes(
+    run: Run,
+    start: int,
+    end: int,
+    decks: list[str] | None = None,
+    stakes: list[str] | None = None,
+) -> Run:
+    """Restrict a run (all its tables) to episodes in ``[start, end]`` that were
+    played on one of ``decks`` / ``stakes`` (None = no filter)."""
+    e = run.episodes
+    keep = (e["episode"] >= start) & (e["episode"] <= end)
+    if decks is not None:
+        keep &= e["deck"].isin(decks)
+    if stakes is not None:
+        keep &= e["stake"].isin(stakes)
+    episodes = set(e.loc[keep, "episode"])
 
     def cut(df: pd.DataFrame | None) -> pd.DataFrame | None:
         if df is None:
             return None
-        return df[(df["episode"] >= start) & (df["episode"] <= end)].reset_index(drop=True)
+        return df[df["episode"].isin(episodes)].reset_index(drop=True)
 
     return Run(
         name=run.name,
@@ -54,6 +69,8 @@ def summary(runs: list[Run]) -> pd.DataFrame:
                 "run": r.name,
                 "play agent": r.config.get("play_agent", "?"),
                 "shop agent": r.config.get("shop_agent", "?"),
+                "decks": ", ".join(catalog.name(d) for d in sorted(e["deck"].unique())),
+                "stakes": ", ".join(sorted(e["stake"].unique())),
                 "episodes": len(e),
                 "mean ante": e["ante"].mean() if len(e) else float("nan"),
                 "max ante": e["ante"].max() if len(e) else float("nan"),
@@ -83,6 +100,23 @@ def learning_curve(runs: list[Run], window: int) -> pd.DataFrame:
                 }
             )
         )
+    return _concat(frames)
+
+
+def by_deck(runs: list[Run]) -> pd.DataFrame:
+    """Per (run, deck, stake): episodes, mean/max ante, win rate."""
+    frames = []
+    for r in runs:
+        if r.episodes.empty:
+            continue
+        g = r.episodes.groupby(["deck", "stake"], as_index=False).agg(
+            episodes=("episode", "size"),
+            mean_ante=("ante", "mean"),
+            max_ante=("ante", "max"),
+            win_rate=("won", "mean"),
+        )
+        g["deck name"] = g["deck"].map(catalog.name)
+        frames.append(g.assign(run=r.name))
     return _concat(frames)
 
 
@@ -185,7 +219,16 @@ def most_bought(runs: list[Run], top: int = 20) -> pd.DataFrame:
     frames = []
     for r in runs:
         counts = joker_purchases(r)["item_key"].value_counts().head(top)
-        frames.append(pd.DataFrame({"run": r.name, "joker": counts.index, "bought": counts.values}))
+        frames.append(
+            pd.DataFrame(
+                {
+                    "run": r.name,
+                    "joker": counts.index,
+                    "name": [catalog.name(k) for k in counts.index],
+                    "bought": counts.values,
+                }
+            )
+        )
     return _concat(frames)
 
 

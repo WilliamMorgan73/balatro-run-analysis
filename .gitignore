@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+# symlinks Streamlit creates into .venv
+.agents/
+.claude/skills/developing-with-streamlit

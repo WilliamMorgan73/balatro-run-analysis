@@ -6,6 +6,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+from balatro_analysis import catalog
+
 TEMPLATE = "plotly_white"
 
 
@@ -17,6 +19,20 @@ def _fig(fig: go.Figure, **layout) -> go.Figure:
 def learning_curve(df: pd.DataFrame, metric: str) -> go.Figure:
     fig = px.line(df, x="episode", y=metric, color="run", title=f"Rolling {metric}")
     return _fig(fig, hovermode="x unified")
+
+
+def by_deck(df: pd.DataFrame) -> go.Figure:
+    df = df.assign(label=df["deck name"] + " / " + df["stake"].map(catalog.stake_name))
+    fig = px.bar(
+        df,
+        x="label",
+        y="mean_ante",
+        color="run",
+        barmode="group",
+        hover_data=["episodes", "max_ante", "win_rate"],
+        title="Mean ante by deck and stake",
+    )
+    return _fig(fig, xaxis_title="", yaxis_title="mean ante")
 
 
 def ante_distribution(df: pd.DataFrame) -> go.Figure:
@@ -81,14 +97,14 @@ def most_bought(df: pd.DataFrame) -> go.Figure:
     fig = px.bar(
         df,
         x="bought",
-        y="joker",
+        y="name",
         color="run",
         barmode="group",
         orientation="h",
         title="Most-bought jokers",
     )
-    fig.update_yaxes(categoryorder="total ascending")
-    return _fig(fig, height=max(350, 22 * df["joker"].nunique()))
+    fig.update_yaxes(categoryorder="total ascending", title="")
+    return _fig(fig, height=max(350, 22 * df["name"].nunique()))
 
 
 def first_bought_ante(df: pd.DataFrame) -> go.Figure:
@@ -105,6 +121,7 @@ def first_bought_ante(df: pd.DataFrame) -> go.Figure:
 
 
 def cooccurrence(matrix: pd.DataFrame, run: str) -> go.Figure:
+    matrix = matrix.rename(index=catalog.name, columns=catalog.name)
     fig = px.imshow(
         matrix,
         text_auto=True,
