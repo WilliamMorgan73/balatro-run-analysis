@@ -215,3 +215,343 @@ def episode_money(timeline: pd.DataFrame, names: Names) -> go.Figure:
         title="Money after each shop decision",
     )
     return _fig(fig)
+
+
+# ---------------------------------------------------------------------------
+# Economy
+# ---------------------------------------------------------------------------
+
+CATEGORY_ORDER = {
+    "category": [
+        "Jokers",
+        "Packs",
+        "Rerolls",
+        "Vouchers",
+        "Tarot",
+        "Planet",
+        "Spectral",
+        "Playing cards",
+    ]
+}
+
+
+def money_curve(df: pd.DataFrame, names: Names) -> go.Figure:
+    """Median money entering/leaving the shop by round, with an inter-quartile band."""
+    fig = go.Figure()
+    colours = px.colors.qualitative.Plotly
+    for i, (run, g) in enumerate(df.groupby("run", sort=False)):
+        colour = colours[i % len(colours)]
+        for when, dash in (("entry", "solid"), ("exit", "dot")):
+            w = g[g["when"] == when].sort_values("round")
+            label = f"{run} · {'entering' if when == 'entry' else 'leaving'}"
+            fig.add_scatter(
+                x=list(w["round"]) + list(w["round"][::-1]),
+                y=list(w["q75"]) + list(w["q25"][::-1]),
+                fill="toself",
+                fillcolor=colour,
+                opacity=0.12,
+                line={"width": 0},
+                hoverinfo="skip",
+                showlegend=False,
+                legendgroup=label,
+            )
+            fig.add_scatter(
+                x=w["round"],
+                y=w["median"],
+                mode="lines+markers",
+                name=label,
+                legendgroup=label,
+                line={"color": colour, "dash": dash},
+                customdata=w[["ante", "visits"]],
+                hovertemplate="round %{x} (ante %{customdata[0]})<br>median $%{y}"
+                "<br>%{customdata[1]} visits<extra></extra>",
+            )
+    fig.update_layout(title="Money entering / leaving the shop (median, IQR band)")
+    return _fig(fig, xaxis_title=names.column("round"), yaxis_title="$")
+
+
+def entry_exit_by_ante(visits: pd.DataFrame, names: Names) -> go.Figure:
+    long = visits.melt(
+        id_vars=["run", "ante"], value_vars=["entry", "exit"], var_name="when", value_name="dollars"
+    )
+    long["when"] = long["when"].map({"entry": "entering", "exit": "leaving"})
+    fig = px.box(
+        long,
+        x="ante",
+        y="dollars",
+        color="run",
+        facet_col="when",
+        labels=_labels(names, "ante", "run") | {"dollars": "$", "when": ""},
+        title="Money entering vs leaving each shop, by ante",
+    )
+    fig.update_xaxes(dtick=1)
+    return _fig(fig)
+
+
+def final_dollars(episodes: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.histogram(
+        episodes,
+        x="final_dollars",
+        color="run",
+        barmode="overlay",
+        opacity=0.6,
+        histnorm="probability",
+        labels=_labels(names, "final_dollars", "run"),
+        title="Money left when the run ended",
+    )
+    return _fig(fig, yaxis_title="fraction of episodes")
+
+
+def spend_share(df: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.bar(
+        df,
+        x="run",
+        y="share",
+        color="category",
+        category_orders=CATEGORY_ORDER,
+        hover_data=["spent", "per_episode"],
+        labels=_labels(names, "run", "share", "category", "spent", "per_episode"),
+        title="Where the money goes (share of shop spending)",
+    )
+    fig.update_yaxes(tickformat=".0%")
+    return _fig(fig)
+
+
+def spend_by_ante(df: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.bar(
+        df,
+        x="ante",
+        y="share",
+        color="category",
+        facet_col="run",
+        category_orders=CATEGORY_ORDER,
+        hover_data=["spent"],
+        labels=_labels(names, "ante", "share", "category", "spent", "run"),
+        title="Spending mix by ante",
+    )
+    fig.update_xaxes(dtick=1)
+    fig.update_yaxes(tickformat=".0%")
+    return _fig(fig)
+
+
+def income_sources(df: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.bar(
+        df,
+        x="per_episode",
+        y="source",
+        color="run",
+        barmode="group",
+        orientation="h",
+        hover_data=["kind"],
+        labels=_labels(names, "run") | {"per_episode": "$ per episode", "source": ""},
+        title="Income per episode by source",
+    )
+    fig.update_yaxes(categoryorder="total ascending")
+    return _fig(fig)
+
+
+def exit_brackets(visits: pd.DataFrame, names: Names) -> go.Figure:
+    cap = int(visits["interest_cap"].mode().iloc[0]) if len(visits) else 25
+    fig = px.histogram(
+        visits,
+        x="exit",
+        color="run",
+        barmode="group",
+        histnorm="probability",
+        labels=_labels(names, "run") | {"exit": "$ leaving the shop"},
+        title="Money left after shopping ($5 brackets = $1 interest each)",
+    )
+    fig.update_traces(xbins={"start": 0, "size": 5})
+    fig.add_vline(
+        x=cap, line_dash="dash", line_color="grey", annotation_text=f"interest cap ${cap}"
+    )
+    return _fig(fig, yaxis_title="fraction of shop visits")
+
+
+def interest_by_ante(visits: pd.DataFrame, names: Names) -> go.Figure:
+    g = visits.groupby(["run", "ante"], as_index=False).agg(
+        interest=("est_interest", "mean"), at_cap=("at_cap", "mean")
+    )
+    fig = px.line(
+        g,
+        x="ante",
+        y="interest",
+        color="run",
+        markers=True,
+        hover_data={"at_cap": ":.0%"},
+        labels=_labels(names, "ante", "run") | {"interest": "$ interest", "at_cap": "at cap"},
+        title="Interest the exit balance would earn (estimated), by ante",
+    )
+    fig.update_xaxes(dtick=1)
+    return _fig(fig)
+
+
+def interest_efficiency(df: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.bar(
+        df,
+        x="ante",
+        y="efficiency",
+        color="run",
+        barmode="group",
+        hover_data=["interest", "max_interest"],
+        labels=_labels(names, "ante", "run")
+        | {"efficiency": "share of max interest", "max_interest": "max $"},
+        title="Interest earned vs the most the cap allows (exact)",
+    )
+    fig.update_xaxes(dtick=1)
+    fig.update_yaxes(tickformat=".0%")
+    return _fig(fig)
+
+
+def rerolls_per_visit(visits: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.histogram(
+        visits,
+        x="rerolls",
+        color="run",
+        barmode="group",
+        histnorm="probability",
+        labels=_labels(names, "run") | {"rerolls": "rerolls in one shop visit"},
+        title="Rerolls per shop visit",
+    )
+    fig.update_xaxes(dtick=1)
+    return _fig(fig, yaxis_title="fraction of shop visits")
+
+
+def reroll_by_ante(df: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.line(
+        df,
+        x="ante",
+        y="reroll_spend_per_visit",
+        color="run",
+        markers=True,
+        hover_data={"rerolls_per_visit": ":.2f", "any_reroll": ":.0%", "visits": True},
+        labels=_labels(names, "ante", "run")
+        | {
+            "reroll_spend_per_visit": "$ on rerolls per visit",
+            "rerolls_per_visit": "rerolls / visit",
+            "any_reroll": "visits with a reroll",
+        },
+        title="Reroll spending by ante",
+    )
+    fig.update_xaxes(dtick=1)
+    return _fig(fig)
+
+
+def price_paid(df: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.box(
+        df,
+        x="category",
+        y="price",
+        color="run",
+        category_orders=CATEGORY_ORDER,
+        labels=_labels(names, "category", "run") | {"price": "$ paid"},
+        title="Price paid per purchase",
+    )
+    return _fig(fig)
+
+
+def joker_price_by_ante(df: pd.DataFrame, names: Names) -> go.Figure:
+    j = df[df["category"] == "Jokers"].groupby(["run", "ante"], as_index=False)["price"].mean()
+    fig = px.line(
+        j,
+        x="ante",
+        y="price",
+        color="run",
+        markers=True,
+        labels=_labels(names, "ante", "run") | {"price": "mean $ per joker"},
+        title="Mean price paid per joker, by ante",
+    )
+    fig.update_xaxes(dtick=1)
+    return _fig(fig)
+
+
+def economy_by_outcome(econ: pd.DataFrame, metric: str, label: str, names: Names) -> go.Figure:
+    fig = px.box(
+        econ,
+        x="ante",
+        y=metric,
+        color="run",
+        labels=_labels(names, "run") | {"ante": "ante reached", metric: label},
+        title=f"{label} vs how far the run got",
+    )
+    fig.update_xaxes(dtick=1)
+    return _fig(fig)
+
+
+def outcome_correlations(df: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.bar(
+        df,
+        x="spearman_rho",
+        y="metric",
+        color="run",
+        barmode="group",
+        orientation="h",
+        hover_data=["episodes"],
+        labels=_labels(names, "run", "episodes")
+        | {"spearman_rho": "Spearman ρ with ante reached", "metric": ""},
+        title="Which economy habits go with deeper runs?",
+    )
+    fig.add_vline(x=0, line_color="grey")
+    fig.update_xaxes(range=[-1, 1])
+    return _fig(fig, height=max(380, 34 * df["metric"].nunique()))
+
+
+def income_breakdown(df: pd.DataFrame, names: Names) -> go.Figure:
+    fig = px.bar(
+        df,
+        x="ante",
+        y="value",
+        color="component",
+        facet_col="run",
+        labels=_labels(names, "ante", "run") | {"value": "$ per beaten blind", "component": ""},
+        title="Cash-out income per beaten blind (exact)",
+    )
+    fig.update_xaxes(dtick=1)
+    return _fig(fig)
+
+
+def offer_conversion(df: pd.DataFrame, names: Names) -> go.Figure:
+    long = df.melt(
+        id_vars=["run", "category"],
+        value_vars=["affordable_share", "buy_rate", "buy_rate_when_affordable"],
+        var_name="measure",
+    )
+    long["measure"] = long["measure"].map(
+        {
+            "affordable_share": "affordable when offered",
+            "buy_rate": "bought (of offered)",
+            "buy_rate_when_affordable": "bought (of affordable)",
+        }
+    )
+    fig = px.bar(
+        long,
+        x="category",
+        y="value",
+        color="measure",
+        barmode="group",
+        facet_col="run",
+        category_orders=CATEGORY_ORDER,
+        labels=_labels(names, "category", "run") | {"value": "", "measure": ""},
+        title="What the shop offered, what was affordable, what was bought",
+    )
+    fig.update_yaxes(tickformat=".0%")
+    return _fig(fig)
+
+
+def offered_vs_paid(conversion: pd.DataFrame, paid: pd.DataFrame, names: Names) -> go.Figure:
+    p = paid.groupby(["run", "category"], as_index=False)["price"].mean()
+    df = conversion[["run", "category", "mean_price"]].merge(p, on=["run", "category"], how="left")
+    long = df.melt(id_vars=["run", "category"], value_vars=["mean_price", "price"], var_name="what")
+    long["what"] = long["what"].map({"mean_price": "offered", "price": "paid"})
+    fig = px.bar(
+        long,
+        x="category",
+        y="value",
+        color="what",
+        barmode="group",
+        facet_col="run",
+        category_orders=CATEGORY_ORDER,
+        labels=_labels(names, "category", "run") | {"value": "mean $", "what": ""},
+        title="Mean price offered vs paid",
+    )
+    return _fig(fig)

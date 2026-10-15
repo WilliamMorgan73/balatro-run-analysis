@@ -57,3 +57,7 @@ def test_training_output_loads(tmp_path):
     assert run.config["play_agent"] == "SmartPlayAgent"
     assert run.steps is not None and len(run.steps) == run.episodes["shop_steps"].sum()
     assert run.rounds is not None and len(run.rounds) >= 3
+    assert run.config["log_version"] == 2
+    beaten = run.rounds[run.rounds["beaten"] & run.rounds["earn_total"].notna()]
+    assert len(beaten) and (beaten["earn_total"] > 0).all()
+    assert run.shops is not None and set(run.shops["reason"]) >= {"enter"}

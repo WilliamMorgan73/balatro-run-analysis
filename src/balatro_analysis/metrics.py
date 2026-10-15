@@ -47,6 +47,7 @@ def filter_episodes(
         config=run.config,
         steps=cut(run.steps),
         rounds=cut(run.rounds),
+        shops=cut(run.shops),
     )
 
 

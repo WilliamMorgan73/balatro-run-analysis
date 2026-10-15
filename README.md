@@ -97,14 +97,34 @@ runs (only `episodes.csv`, no deck column) still load; tabs that need missing da
 | `episodes.csv` | episode | ante reached, wins, deck, stake, return, action counts, $ spent, final jokers |
 | `config.json` | run | agents, seed prefix, CLI args (shown under *Run configs*) |
 | `steps.jsonl` | shop decision | money, item bought/sold, jokers held, reward |
-| `rounds.jsonl` | blind played | score vs target, which blind ended the run |
+| `rounds.jsonl` | blind played | score vs target, which blind ended the run; cash-out breakdown \* |
+| `shops.jsonl` \* | shop offer (entering a shop, each reroll) | what was offered, at what price, with how much money |
+
+\* `log_version` 2 runs. Older (v1) runs logged beaten bosses under the *next* ante; the loader
+moves them back to the ante they were played in.
 
 ## Tabs
 
 - **Overview**: summary per run, rolling learning curve (ante / win rate / return), ante-reached distribution
 - **Decks**: deck cards with episodes and mean ante; mean ante by deck and stake per run
 - **Actions**: share of each of the 17 shop actions; action × ante heatmap
-- **Economy**: money before shop decisions by ante; $ spent per episode
+- **Economy**: KPI strip (spend, selling, rerolls, money in/out of the shop, exits at the interest
+  cap, money at death) and sub-tabs:
+  - *Money flow*: money entering/leaving the shop by round (median + IQR), by ante, at run end
+  - *Spending*: share by category (jokers, packs, rerolls, vouchers, consumables), mix by ante,
+    income by source
+  - *Interest & saving*: money left after shopping in $5 brackets vs the cap, estimated interest,
+    money parked above the cap
+  - *Rerolls & prices*: rerolls per visit, reroll spend by ante, price paid by category, joker
+    price by ante
+  - *Economy vs outcome*: Spearman correlation of each habit with ante reached (per-visit
+    measures, since totals grow with run length), and any habit by ante reached
+  - *Cash-out income* \*: blind reward, interest, unused hands, joker $ and rent per beaten blind;
+    interest earned vs the maximum
+  - *Shop offers* \*: what was offered, affordable and bought per category; offered vs paid
+    price; jokers most often affordable but skipped
+
+  \* needs runs from the current training script (`log_version` 2 in `config.json`)
 - **Jokers**: most-bought gallery; ante first bought; end-of-episode co-occurrence; sold → next bought pairs
 - **Joker collection**: all 150 jokers as game-style cards (art, effect text, rarity, cost) with
   stats from the selected runs (times bought, first ante, held at end, mean ante); search,
@@ -118,6 +138,7 @@ runs (only `episodes.csv`, no deck column) still load; tabs that need missing da
 app.py                          Streamlit UI only
 src/balatro_analysis/loader.py  find_runs / load_run -> Run
 src/balatro_analysis/metrics.py pure pandas metrics (testable without Streamlit)
+src/balatro_analysis/economy.py economy metrics (shop visits, spending, interest, offers)
 src/balatro_analysis/plots.py   Plotly figure builders
 src/balatro_analysis/catalog.py display names for game keys (centers, blinds)
 src/balatro_analysis/names.py   in-game names vs exact keys (the sidebar toggle)

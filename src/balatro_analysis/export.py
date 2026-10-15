@@ -19,7 +19,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-from balatro_analysis import metrics
+from balatro_analysis import economy, metrics
 from balatro_analysis.loader import Run
 from balatro_analysis.names import DEFAULT_KEYS, Names
 
@@ -66,6 +66,20 @@ def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[st
         "most_bought": with_names(metrics.most_bought(runs, top)),
         "first_bought_ante": with_names(metrics.first_bought_ante(runs)),
         "joker_stats": with_names(metrics.joker_stats(runs).reset_index()),
+        "economy_kpis": economy.kpis(runs),
+        "shop_visits": economy.shop_visits(runs),
+        "money_by_round": economy.money_by_round(runs),
+        "spend_by_category": economy.spend_by_category(runs),
+        "spend_by_category_by_ante": economy.spend_by_category(runs, by_ante=True),
+        "income_by_source": economy.income_by_source(runs),
+        "income_breakdown": economy.income_breakdown(runs),
+        "interest_efficiency": economy.interest_efficiency(runs),
+        "reroll_stats": economy.reroll_stats(runs),
+        "price_paid": with_names(economy.price_paid(runs)),
+        "episode_economy": economy.episode_economy(runs),
+        "economy_vs_outcome": economy.outcome_correlations(economy.episode_economy(runs)),
+        "offer_conversion": economy.offer_conversion(runs),
+        "skipped_jokers": with_names(economy.skipped_jokers(runs), {"key": "item"}),
         "score_ratio": with_names(metrics.score_ratio(runs)),
         "deaths": with_names(metrics.deaths(runs)),
     }
@@ -111,6 +125,8 @@ def export_zip(
                 put(f"{base}/steps.csv", with_names(r.steps))
             if r.rounds is not None:
                 put(f"{base}/rounds.csv", with_names(r.rounds))
+            if r.shops is not None:  # one row per offered item
+                put(f"{base}/shop_offers.csv", with_names(economy.offers(r), {"key": "item"}))
         for name, df in computed_tables(runs, window, top).items():
             put(f"tables/{name}.csv", df)
 

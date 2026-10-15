@@ -1,8 +1,9 @@
 """Load training runs written by jackdaw-balatro's ``scripts/train_random_shop.py``.
 
 A run is a directory containing ``episodes.csv``, and optionally
-``config.json``, ``steps.jsonl`` (one row per shop decision) and
-``rounds.jsonl`` (one row per blind played).
+``config.json``, ``steps.jsonl`` (one row per shop decision), ``rounds.jsonl``
+(one row per blind played, newer runs with the cash-out breakdown) and
+``shops.jsonl`` (newer runs: what each shop offered).
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ class Run:
     config: dict = field(default_factory=dict)
     steps: pd.DataFrame | None = None
     rounds: pd.DataFrame | None = None
+    shops: pd.DataFrame | None = None
 
 
 def find_runs(root: str | Path) -> list[Path]:
@@ -64,6 +66,12 @@ def load_run(path: str | Path, root: str | Path | None = None) -> Run:
 
     steps = _read_jsonl(path / "steps.jsonl")
     rounds = _read_jsonl(path / "rounds.jsonl")
+    shops = _read_jsonl(path / "shops.jsonl")
+    if rounds is not None and config.get("log_version", 1) < 2 and "blind_key" in rounds:
+        # v1 logs read the ante after the round ended, and beating a boss advances
+        # the ante first: move beaten bosses back to the ante they were played in.
+        boss_won = ~rounds["blind_key"].isin(["bl_small", "bl_big"]) & rounds["beaten"].astype(bool)
+        rounds.loc[boss_won, "ante"] -= 1
     if steps is not None:
         for col in ("jokers_before", "consumables_before"):
             if col in steps:
@@ -76,6 +84,7 @@ def load_run(path: str | Path, root: str | Path | None = None) -> Run:
         config=config,
         steps=steps,
         rounds=rounds,
+        shops=shops,
     )
 
 

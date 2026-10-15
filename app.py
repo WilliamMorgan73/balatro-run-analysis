@@ -12,10 +12,23 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 PACKAGE_DIR = Path(__file__).parent / "src" / "balatro_analysis"
-RELOAD_ORDER = ["catalog", "names", "loader", "metrics", "plots", "sprites", "picker", "export"]
+RELOAD_ORDER = [
+    "catalog",
+    "names",
+    "loader",
+    "metrics",
+    "economy",
+    "plots",
+    "sprites",
+    "game_text",
+    "collection",
+    "picker",
+    "export",
+]
 
 
 def package_mtime() -> float:
@@ -39,7 +52,7 @@ def reload_if_changed() -> None:
 
 reload_if_changed()
 
-from balatro_analysis import catalog, collection, export, metrics, plots  # noqa: E402
+from balatro_analysis import catalog, collection, economy, export, metrics, plots  # noqa: E402
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
 from balatro_analysis.loader import Run, find_runs, load_run  # noqa: E402
 from balatro_analysis.names import Names  # noqa: E402
@@ -49,6 +62,7 @@ from balatro_analysis.sprites import Sprites, find_balatro, game_archive  # noqa
 sys.modules["balatro_analysis"]._app_mtime = package_mtime()  # see reload_if_changed
 
 DEFAULT_RUNS_DIR = Path(__file__).parent.parent / "jackdaw-balatro" / "runs"
+MIN_VISITS = 5  # money-curve points need at least this many shop visits
 ICON_WIDTH = 71  # Balatro's 1x card size; sprites are 2x for sharpness
 
 
@@ -97,6 +111,17 @@ def need(df, what: str, logs_missing: bool = False) -> bool:
 
 
 CHARTS: dict[str, object] = {}
+
+
+def need_new(df, what: str) -> bool:
+    """Like need(), for data only runs from the newer training script log."""
+    if df is None or len(df) == 0:
+        st.info(
+            f"No {what}: needs a run made with the current training script "
+            "(log_version 2: cash-out breakdown and shops.jsonl)."
+        )
+        return False
+    return True
 
 
 def chart(fig, name: str) -> None:
@@ -229,6 +254,9 @@ by_name = {r.name: r for r in runs}
 no_steps = any(r.steps is None for r in runs)
 no_rounds = any(r.rounds is None for r in runs)
 
+TOP_JOKERS_DEFAULT = 15
+top = TOP_JOKERS_DEFAULT  # the Jokers tab's slider; the export reads it even when that tab is shut
+# Tabs report which one is open, so only the open tab builds its charts
 tabs = st.tabs(
     [
         "Overview",
@@ -239,212 +267,431 @@ tabs = st.tabs(
         "Joker collection",
         "Rounds",
         "Episode explorer",
-    ]
+    ],
+    key="main_tab",
+    on_change="rerun",
 )
 
 # --- Overview -------------------------------------------------------------
 with tabs[0]:
-    summary = metrics.summary(runs)
-    table(
-        summary,
-        {"decks": "items", "stakes": "stakes"},
-        column_config={
-            names.column("mean ante"): st.column_config.NumberColumn(format="%.2f"),
-            names.column("win rate"): st.column_config.NumberColumn(format="percent"),
-            names.column("mean return"): st.column_config.NumberColumn(format="%.2f"),
-            names.column("shop steps / ep"): st.column_config.NumberColumn(format="%.1f"),
-            names.column("s / ep"): st.column_config.NumberColumn(format="%.3f"),
-        },
-    )
-    curve = metrics.learning_curve(runs, window)
-    if need(curve, "episodes for this selection"):
-        metric = st.radio("Curve", ["mean ante", "win rate", "mean return"], horizontal=True)
-        chart(plots.learning_curve(curve, metric, names), f"learning curve {metric}")
-        chart(plots.ante_distribution(metrics.ante_distribution(runs), names), "ante reached")
-    with st.expander("Run configs"):
-        for r in runs:
-            st.markdown(f"**{r.name}**")
-            st.json(r.config or {"note": "no config.json"}, expanded=False)
+    if tabs[0].open:
+        summary = metrics.summary(runs)
+        table(
+            summary,
+            {"decks": "items", "stakes": "stakes"},
+            column_config={
+                names.column("mean ante"): st.column_config.NumberColumn(format="%.2f"),
+                names.column("win rate"): st.column_config.NumberColumn(format="percent"),
+                names.column("mean return"): st.column_config.NumberColumn(format="%.2f"),
+                names.column("shop steps / ep"): st.column_config.NumberColumn(format="%.1f"),
+                names.column("s / ep"): st.column_config.NumberColumn(format="%.3f"),
+            },
+        )
+        curve = metrics.learning_curve(runs, window)
+        if need(curve, "episodes for this selection"):
+            metric = st.radio("Curve", ["mean ante", "win rate", "mean return"], horizontal=True)
+            chart(plots.learning_curve(curve, metric, names), f"learning curve {metric}")
+            chart(plots.ante_distribution(metrics.ante_distribution(runs), names), "ante reached")
+        with st.expander("Run configs"):
+            for r in runs:
+                st.markdown(f"**{r.name}**")
+                st.json(r.config or {"note": "no config.json"}, expanded=False)
 
 # --- Decks ----------------------------------------------------------------
 with tabs[1]:
-    deck_table = metrics.by_deck(runs)
-    if need(deck_table, "episodes for this selection"):
-        overall = (
-            deck_table.assign(antes=deck_table["mean_ante"] * deck_table["episodes"])
-            .groupby("deck", as_index=False)[["episodes", "antes"]]
-            .sum()
-        )
-        icon_grid(
-            [
-                (
-                    d.deck,
-                    f"**{names.deck(d.deck)}**  \n{d.episodes} episodes  \n"
-                    f"mean ante {d.antes / d.episodes:.2f}",
-                )
-                for d in overall.itertuples()
-            ]
-        )
-        chart(plots.by_deck(deck_table, names), "mean ante by deck")
-        table(
-            deck_table[["run", "deck", "stake", "episodes", "mean_ante", "max_ante", "win_rate"]],
-            column_config={
-                names.column("mean_ante"): st.column_config.NumberColumn(format="%.2f"),
-                names.column("win_rate"): st.column_config.NumberColumn(format="percent"),
-            },
-        )
+    if tabs[1].open:
+        deck_table = metrics.by_deck(runs)
+        if need(deck_table, "episodes for this selection"):
+            overall = (
+                deck_table.assign(antes=deck_table["mean_ante"] * deck_table["episodes"])
+                .groupby("deck", as_index=False)[["episodes", "antes"]]
+                .sum()
+            )
+            icon_grid(
+                [
+                    (
+                        d.deck,
+                        f"**{names.deck(d.deck)}**  \n{d.episodes} episodes  \n"
+                        f"mean ante {d.antes / d.episodes:.2f}",
+                    )
+                    for d in overall.itertuples()
+                ]
+            )
+            chart(plots.by_deck(deck_table, names), "mean ante by deck")
+            table(
+                deck_table[
+                    ["run", "deck", "stake", "episodes", "mean_ante", "max_ante", "win_rate"]
+                ],
+                column_config={
+                    names.column("mean_ante"): st.column_config.NumberColumn(format="%.2f"),
+                    names.column("win_rate"): st.column_config.NumberColumn(format="percent"),
+                },
+            )
 
 # --- Actions --------------------------------------------------------------
 with tabs[2]:
-    freq = metrics.action_frequency(runs)
-    if need(freq, "shop actions"):
-        chart(plots.action_frequency(freq, names), "action share")
-    run_name = st.selectbox("Run for heatmap", run_names, key="actions_run")
-    heat = metrics.action_by_ante(by_name[run_name])
-    if need(heat, "per-step action data", by_name[run_name].steps is None):
-        chart(plots.action_by_ante(heat, run_name, names), f"actions by ante {run_name}")
+    if tabs[2].open:
+        freq = metrics.action_frequency(runs)
+        if need(freq, "shop actions"):
+            chart(plots.action_frequency(freq, names), "action share")
+        run_name = st.selectbox("Run for heatmap", run_names, key="actions_run")
+        heat = metrics.action_by_ante(by_name[run_name])
+        if need(heat, "per-step action data", by_name[run_name].steps is None):
+            chart(plots.action_by_ante(heat, run_name, names), f"actions by ante {run_name}")
 
 # --- Economy --------------------------------------------------------------
 with tabs[3]:
-    money = metrics.money_by_ante(runs)
-    if need(money, "per-step money data", no_steps):
-        chart(plots.money_by_ante(money, names), "money by ante")
-    spend = metrics.spend_per_episode(runs)
-    if need(spend, "spend data"):
-        chart(plots.spend_per_episode(spend, names), "spend per episode")
+    if tabs[3].open:
+        kpi = economy.kpis(runs)
+        if len(kpi):
+            top_row = kpi.iloc[0]
+            st.caption(
+                f"Key numbers for **{top_row['run']}**"
+                + (" (every selected run is in the table below)" if len(kpi) > 1 else "")
+            )
+            cols = st.columns(7)
+            for col, (label, field, fmt) in zip(
+                cols,
+                [
+                    ("$ spent / episode", "spent_per_episode", "${:.2f}"),
+                    ("$ from selling / ep", "sold_per_episode", "${:.2f}"),
+                    ("$ on rerolls / ep", "reroll_per_episode", "${:.2f}"),
+                    ("Mean $ entering shop", "mean_entry", "${:.2f}"),
+                    ("Mean $ leaving shop", "mean_exit", "${:.2f}"),
+                    ("Exits at interest cap", "exits_at_cap", "{:.1%}"),
+                    ("Mean $ at end of run", "final_dollars", "${:.2f}"),
+                ],
+                strict=True,
+            ):
+                value = top_row[field]
+                col.metric(label, "-" if pd.isna(value) else fmt.format(value))
+            if len(kpi) > 1:
+                money = st.column_config.NumberColumn(format="$%.2f")
+                table(
+                    kpi,
+                    column_config={
+                        names.column(c): money
+                        for c in (
+                            "spent_per_episode",
+                            "sold_per_episode",
+                            "reroll_per_episode",
+                            "mean_entry",
+                            "mean_exit",
+                            "final_dollars",
+                        )
+                    }
+                    | {
+                        names.column("exits_at_cap"): st.column_config.NumberColumn(
+                            format="percent"
+                        )
+                    },
+                )
+
+        visits = economy.shop_visits(runs)
+        econ = economy.episode_economy(runs)
+        sub = st.tabs(
+            [
+                "Money flow",
+                "Spending",
+                "Interest & saving",
+                "Rerolls & prices",
+                "Economy vs outcome",
+                "Cash-out income",
+                "Shop offers",
+            ],
+            key="econ_tab",
+            on_change="rerun",
+        )
+        with sub[0]:
+            if sub[0].open:
+                if need(visits, "shop visits", no_steps):
+                    curve = economy.money_by_round(runs)
+                    st.caption(
+                        f"Rounds with fewer than {MIN_VISITS} shop visits are left off the "
+                        "money curve (too few runs get that far to say much)."
+                    )
+                    chart(
+                        plots.money_curve(curve[curve["visits"] >= MIN_VISITS], names),
+                        "money curve",
+                    )
+                    chart(plots.entry_exit_by_ante(visits, names), "money entering vs leaving")
+                    money = metrics.money_by_ante(runs)
+                    chart(plots.money_by_ante(money, names), "money before each decision")
+                if "final_dollars" in econ and econ["final_dollars"].notna().any():
+                    chart(plots.final_dollars(econ, names), "money at end of run")
+
+        with sub[1]:
+            if sub[1].open:
+                spend = economy.spend_by_category(runs)
+                if need(spend, "purchases", no_steps):
+                    chart(plots.spend_share(spend, names), "spending by category")
+                    chart(
+                        plots.spend_by_ante(economy.spend_by_category(runs, by_ante=True), names),
+                        "spending mix by ante",
+                    )
+                income = economy.income_by_source(runs)
+                if need(income, "income"):
+                    chart(plots.income_sources(income, names), "income by source")
+                spend_ep = metrics.spend_per_episode(runs)
+                if need(spend_ep, "spend data"):
+                    chart(plots.spend_per_episode(spend_ep, names), "spend per episode")
+
+        with sub[2]:
+            if sub[2].open:
+                if need(visits, "shop visits", no_steps):
+                    st.caption(
+                        "Interest is paid at cash-out: $1 per $5 held, up to the cap. "
+                        "Estimated here from the money left when leaving the shop."
+                    )
+                    chart(plots.exit_brackets(visits, names), "money left after shopping")
+                    chart(plots.interest_by_ante(visits, names), "estimated interest by ante")
+                    parked = visits.groupby("run", as_index=False).agg(
+                        visits=("exit", "size"),
+                        exits_at_cap=("at_cap", "mean"),
+                        mean_parked_above_cap=("parked_above_cap", "mean"),
+                        mean_est_interest=("est_interest", "mean"),
+                    )
+                    table(
+                        parked,
+                        column_config={
+                            names.column("exits_at_cap"): st.column_config.NumberColumn(
+                                format="percent"
+                            ),
+                            names.column("mean_parked_above_cap"): st.column_config.NumberColumn(
+                                format="$%.2f"
+                            ),
+                            names.column("mean_est_interest"): st.column_config.NumberColumn(
+                                format="$%.2f"
+                            ),
+                        },
+                    )
+                eff = economy.interest_efficiency(runs)
+                if need_new(eff, "exact interest"):
+                    chart(plots.interest_efficiency(eff, names), "interest efficiency")
+
+        with sub[3]:
+            if sub[3].open:
+                if need(visits, "shop visits", no_steps):
+                    chart(plots.rerolls_per_visit(visits, names), "rerolls per visit")
+                    chart(
+                        plots.reroll_by_ante(economy.reroll_stats(runs), names),
+                        "reroll spend by ante",
+                    )
+                paid = economy.price_paid(runs)
+                if need(paid, "purchases", no_steps):
+                    chart(plots.price_paid(paid, names), "price paid")
+                    chart(plots.joker_price_by_ante(paid, names), "joker price by ante")
+
+        with sub[4]:
+            if sub[4].open:
+                corr = economy.outcome_correlations(econ)
+                if need(corr, "enough episodes with shop data", no_steps):
+                    st.caption(
+                        "Spearman ρ between each habit and the ante reached (+1: more of it "
+                        "goes with deeper runs). Totals grow with run length, so they "
+                        "correlate almost by construction; compare the per-visit measures."
+                    )
+                    chart(plots.outcome_correlations(corr, names), "economy vs ante reached")
+                    choices = {
+                        k: v
+                        for k, v in economy.OUTCOME_METRICS.items()
+                        if k in econ and econ[k].notna().any()
+                    }
+                    metric = st.selectbox(
+                        "Habit", list(choices), format_func=choices.get, key="econ_outcome_metric"
+                    )
+                    chart(
+                        plots.economy_by_outcome(econ, metric, choices[metric], names),
+                        f"{choices[metric]} by ante reached",
+                    )
+
+        with sub[5]:
+            if sub[5].open:
+                breakdown = economy.income_breakdown(runs)
+                if need_new(breakdown, "cash-out breakdown"):
+                    chart(plots.income_breakdown(breakdown, names), "cash-out income")
+                    eff = economy.interest_efficiency(runs)
+                    if need_new(eff, "exact interest"):
+                        chart(
+                            plots.interest_efficiency(eff, names), "interest efficiency (cash-out)"
+                        )
+
+        with sub[6]:
+            if sub[6].open:
+                conversion = economy.offer_conversion(runs)
+                if need_new(conversion, "shop offers"):
+                    chart(plots.offer_conversion(conversion, names), "offer conversion")
+                    chart(
+                        plots.offered_vs_paid(conversion, economy.price_paid(runs), names),
+                        "price offered vs paid",
+                    )
+                    table(
+                        conversion.round(3),
+                        column_config={
+                            names.column(c): st.column_config.NumberColumn(format="percent")
+                            for c in ("affordable_share", "buy_rate", "buy_rate_when_affordable")
+                        },
+                    )
+                    skipped = economy.skipped_jokers(runs)
+                    st.subheader("Jokers most often affordable but not bought")
+                    if need(skipped, "affordable jokers"):
+                        icon_grid(
+                            [
+                                (
+                                    s.key,
+                                    f"**{names.item(s.key)}**  \n"
+                                    f"skipped {s.skipped} of {s.affordable}",
+                                )
+                                for s in skipped.itertuples()
+                            ]
+                        )
 
 # --- Jokers ---------------------------------------------------------------
 with tabs[4]:
-    top = st.slider("Top N jokers", 5, 40, 15)
-    run_name = st.selectbox("Run", run_names, key="jokers_run")
-    run = by_name[run_name]
-    bought_one = metrics.most_bought([run], top)
-    st.subheader(f"Most-bought jokers: {run_name}")
-    if need(bought_one, "joker purchases", run.steps is None):
-        icon_grid(
-            [
-                (b.joker, f"**{names.item(b.joker)}**  \nbought {b.bought}x")
-                for b in bought_one.itertuples()
-            ]
-        )
-    bought = metrics.most_bought(runs, top)
-    if len(runs) > 1 and need(bought, "joker purchases", no_steps):
-        chart(plots.most_bought(bought, names), "most bought jokers")
-    first = metrics.first_bought_ante(runs)
-    if len(first):
-        chart(plots.first_bought_ante(first, names), "first bought ante")
-    co = metrics.joker_cooccurrence(run, top)
-    if need(co, "end-of-episode joker builds"):
-        chart(plots.cooccurrence(co, run_name, names), f"joker cooccurrence {run_name}")
-    swaps = metrics.sell_then_buy(run)
-    st.subheader("Sold → next joker bought")
-    if need(swaps, "sell-then-buy pairs", run.steps is None):
-        table(
-            swaps.assign(
-                sold_icon=swaps["sold"].map(sprites.data_uri) if sprites else None,
-                bought_icon=swaps["bought"].map(sprites.data_uri) if sprites else None,
-            )[["sold_icon", "sold", "bought_icon", "bought", "count"]],
-            {"sold": "item", "bought": "item"},
-            column_config={
-                names.column("sold_icon"): st.column_config.ImageColumn("", width="small"),
-                names.column("bought_icon"): st.column_config.ImageColumn("", width="small"),
-            },
-            row_height=60 if sprites else None,
-        )
-
-# --- Joker collection -----------------------------------------------------
-with tabs[5]:
-    game_text = cached_game_text(str(archive), pkg_mtime) if archive else None
-    cards = collection.build_cards(
-        metrics.joker_stats(runs),
-        game_text,
-        cached_sprites(str(archive), pkg_mtime, 1) if archive else None,
-    )
-    c1, c2, c3, c4 = st.columns([3, 3, 2, 2])
-    query = c1.text_input("Search", placeholder="name, key or effect text", key="jk_query")
-    rarities = c2.multiselect(
-        "Rarity",
-        list(RARITY),
-        default=list(RARITY),
-        format_func=lambda r: RARITY[r][0],
-        key="jk_rarity",
-    )
-    sort = c3.selectbox("Sort by", list(collection.SORTS), key="jk_sort")
-    only_used = c4.toggle("Only used in runs", key="jk_used")
-    shown = collection.select(cards, query, rarities, only_used, sort)
-    note = "" if game_text else " · art and effect text need the game (see Game assets)"
-    st.caption(f"Showing {len(shown)} of {len(cards)} jokers · stats from the selected runs{note}")
-    if shown:
-        st.html(collection.grid_html(shown, names))
-    else:
-        st.info("No jokers match.")
-
-# --- Rounds ---------------------------------------------------------------
-with tabs[6]:
-    ratio = metrics.score_ratio(runs)
-    if need(ratio, "round data", no_rounds):
-        chart(plots.score_ratio(ratio, names), "score vs target")
-    dead = metrics.deaths(runs)
-    if need(dead, "lost rounds", no_rounds):
-        chart(plots.deaths(dead, names), "blind that ended the run")
-
-# --- Episode explorer -----------------------------------------------------
-with tabs[7]:
-    run_name = st.selectbox("Run", run_names, key="explorer_run")
-    run = by_name[run_name]
-    eps = run.episodes.set_index("episode")
-    if need(eps, "episodes for this selection"):
-        episode = st.selectbox(
-            "Episode",
-            eps.index.tolist(),
-            format_func=lambda e: (
-                f"{e}  ({names.deck(eps.loc[e, 'deck'])}, ante {eps.loc[e, 'ante']}, "
-                f"{eps.loc[e, 'shop_steps']} shop steps)"
-            ),
-        )
-        row = eps.loc[episode]
-        deck_col, stats_col = st.columns([1, 6])
-        with deck_col:
-            deck_png = sprites.png(row["deck"]) if sprites else None
-            if deck_png:
-                st.image(deck_png, width=ICON_WIDTH)
-            st.caption(f"**{names.deck(row['deck'])}**  \n{names.stake(row['stake'])}")
-        with stats_col:
-            cols = st.columns(5)
-            cols[0].metric("Ante reached", int(row["ante"]))
-            cols[1].metric("Won", "yes" if row["won"] else "no")
-            cols[2].metric("Shop decisions", int(row["shop_steps"]))
-            cols[3].metric("$ spent", int(row["dollars_spent"]))
-            cols[4].metric("Seed", str(row.get("seed", "-")))
-
-        final = [j for j in str(row.get("final_jokers", "")).split(";") if j]
-        st.subheader("Final jokers")
-        if final:
-            icon_grid([(j, names.item(j)) for j in final])
-        else:
-            st.caption("None")
-
-        timeline = metrics.episode_timeline(run, episode)
-        if need(timeline, "shop decisions in this episode", run.steps is None):
-            chart(plots.episode_money(timeline, names), f"episode {episode} money {run_name}")
-            timeline = timeline.assign(
-                icon=timeline["item_key"].map(
-                    lambda k: sprites.data_uri(k) if sprites and catalog.is_joker(k) else None
-                )
+    if tabs[4].open:
+        top = st.slider("Top N jokers", 5, 40, TOP_JOKERS_DEFAULT)
+        run_name = st.selectbox("Run", run_names, key="jokers_run")
+        run = by_name[run_name]
+        bought_one = metrics.most_bought([run], top)
+        st.subheader(f"Most-bought jokers: {run_name}")
+        if need(bought_one, "joker purchases", run.steps is None):
+            icon_grid(
+                [
+                    (b.joker, f"**{names.item(b.joker)}**  \nbought {b.bought}x")
+                    for b in bought_one.itertuples()
+                ]
             )
-            order = ["step", "ante", "round", "dollars_before", "action_name", "icon", "item_key"]
-            order += [c for c in timeline.columns if c not in order]
+        bought = metrics.most_bought(runs, top)
+        if len(runs) > 1 and need(bought, "joker purchases", no_steps):
+            chart(plots.most_bought(bought, names), "most bought jokers")
+        first = metrics.first_bought_ante(runs)
+        if len(first):
+            chart(plots.first_bought_ante(first, names), "first bought ante")
+        co = metrics.joker_cooccurrence(run, top)
+        if need(co, "end-of-episode joker builds"):
+            chart(plots.cooccurrence(co, run_name, names), f"joker cooccurrence {run_name}")
+        swaps = metrics.sell_then_buy(run)
+        st.subheader("Sold → next joker bought")
+        if need(swaps, "sell-then-buy pairs", run.steps is None):
             table(
-                timeline[order],
+                swaps.assign(
+                    sold_icon=swaps["sold"].map(sprites.data_uri) if sprites else None,
+                    bought_icon=swaps["bought"].map(sprites.data_uri) if sprites else None,
+                )[["sold_icon", "sold", "bought_icon", "bought", "count"]],
+                {"sold": "item", "bought": "item"},
                 column_config={
-                    names.column("icon"): st.column_config.ImageColumn("", width="small")
+                    names.column("sold_icon"): st.column_config.ImageColumn("", width="small"),
+                    names.column("bought_icon"): st.column_config.ImageColumn("", width="small"),
                 },
                 row_height=60 if sprites else None,
             )
-        st.subheader("Blinds played")
-        rounds = metrics.episode_rounds(run, episode)
-        if need(rounds, "rounds in this episode", run.rounds is None):
-            table(rounds)
+
+# --- Joker collection -----------------------------------------------------
+with tabs[5]:
+    if tabs[5].open:
+        game_text = cached_game_text(str(archive), pkg_mtime) if archive else None
+        cards = collection.build_cards(
+            metrics.joker_stats(runs),
+            game_text,
+            cached_sprites(str(archive), pkg_mtime, 1) if archive else None,
+        )
+        c1, c2, c3, c4 = st.columns([3, 3, 2, 2])
+        query = c1.text_input("Search", placeholder="name, key or effect text", key="jk_query")
+        rarities = c2.multiselect(
+            "Rarity",
+            list(RARITY),
+            default=list(RARITY),
+            format_func=lambda r: RARITY[r][0],
+            key="jk_rarity",
+        )
+        sort = c3.selectbox("Sort by", list(collection.SORTS), key="jk_sort")
+        only_used = c4.toggle("Only used in runs", key="jk_used")
+        shown = collection.select(cards, query, rarities, only_used, sort)
+        note = "" if game_text else " · art and effect text need the game (see Game assets)"
+        st.caption(
+            f"Showing {len(shown)} of {len(cards)} jokers · stats from the selected runs{note}"
+        )
+        if shown:
+            st.html(collection.grid_html(shown, names))
+        else:
+            st.info("No jokers match.")
+
+# --- Rounds ---------------------------------------------------------------
+with tabs[6]:
+    if tabs[6].open:
+        ratio = metrics.score_ratio(runs)
+        if need(ratio, "round data", no_rounds):
+            chart(plots.score_ratio(ratio, names), "score vs target")
+        dead = metrics.deaths(runs)
+        if need(dead, "lost rounds", no_rounds):
+            chart(plots.deaths(dead, names), "blind that ended the run")
+
+# --- Episode explorer -----------------------------------------------------
+with tabs[7]:
+    if tabs[7].open:
+        run_name = st.selectbox("Run", run_names, key="explorer_run")
+        run = by_name[run_name]
+        eps = run.episodes.set_index("episode")
+        if need(eps, "episodes for this selection"):
+            episode = st.selectbox(
+                "Episode",
+                eps.index.tolist(),
+                format_func=lambda e: (
+                    f"{e}  ({names.deck(eps.loc[e, 'deck'])}, ante {eps.loc[e, 'ante']}, "
+                    f"{eps.loc[e, 'shop_steps']} shop steps)"
+                ),
+            )
+            row = eps.loc[episode]
+            deck_col, stats_col = st.columns([1, 6])
+            with deck_col:
+                deck_png = sprites.png(row["deck"]) if sprites else None
+                if deck_png:
+                    st.image(deck_png, width=ICON_WIDTH)
+                st.caption(f"**{names.deck(row['deck'])}**  \n{names.stake(row['stake'])}")
+            with stats_col:
+                cols = st.columns(5)
+                cols[0].metric("Ante reached", int(row["ante"]))
+                cols[1].metric("Won", "yes" if row["won"] else "no")
+                cols[2].metric("Shop decisions", int(row["shop_steps"]))
+                cols[3].metric("$ spent", int(row["dollars_spent"]))
+                cols[4].metric("Seed", str(row.get("seed", "-")))
+
+            final = [j for j in str(row.get("final_jokers", "")).split(";") if j]
+            st.subheader("Final jokers")
+            if final:
+                icon_grid([(j, names.item(j)) for j in final])
+            else:
+                st.caption("None")
+
+            timeline = metrics.episode_timeline(run, episode)
+            if need(timeline, "shop decisions in this episode", run.steps is None):
+                chart(plots.episode_money(timeline, names), f"episode {episode} money {run_name}")
+                timeline = timeline.assign(
+                    icon=timeline["item_key"].map(
+                        lambda k: sprites.data_uri(k) if sprites and catalog.is_joker(k) else None
+                    )
+                )
+                order = [
+                    "step",
+                    "ante",
+                    "round",
+                    "dollars_before",
+                    "action_name",
+                    "icon",
+                    "item_key",
+                ]
+                order += [c for c in timeline.columns if c not in order]
+                table(
+                    timeline[order],
+                    column_config={
+                        names.column("icon"): st.column_config.ImageColumn("", width="small")
+                    },
+                    row_height=60 if sprites else None,
+                )
+            st.subheader("Blinds played")
+            rounds = metrics.episode_rounds(run, episode)
+            if need(rounds, "rounds in this episode", run.rounds is None):
+                table(rounds)
 
 # --- Export (sidebar, after every chart is registered) --------------------
 with export_area, st.expander("Export"):
@@ -471,12 +718,12 @@ with export_area, st.expander("Export"):
     if problem := chart_export_problem():
         st.caption(f"Chart export unavailable: {problem}")
     st.download_button(
-        f"All {len(CHARTS)} charts (ZIP)",
+        f"Charts on this tab: {len(CHARTS)} (ZIP)",
         data=functools.partial(export.charts_zip, dict(CHARTS), fmts),
         disabled=problem is not None,
         file_name=f"balatro_charts_{stamp}.zip",
         mime="application/zip",
         key="dl_charts",
         on_click="ignore",
-        help="Every chart currently shown, light theme, 1600x900.",
+        help="Every chart on the open tab (and sub-tab), light theme, 1600x900.",
     )

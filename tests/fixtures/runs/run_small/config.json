@@ -21,5 +21,6 @@
     "use_cons_1",
     "reroll",
     "skip"
-  ]
+  ],
+  "log_version": 2
 }

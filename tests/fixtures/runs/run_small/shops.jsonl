@@ -1,0 +1,3 @@
+{"episode": 0, "step": 0, "ante": 1, "round": 1, "reason": "enter", "dollars": 10, "reroll_cost": 5, "items": [{"kind": "card", "key": "j_joker", "cost": 5}, {"kind": "card", "key": "c_moon", "cost": 3}, {"kind": "voucher", "key": "v_overstock_norm", "cost": 10}, {"kind": "pack", "key": "p_buffoon_normal_1", "cost": 4}]}
+{"episode": 0, "step": 2, "ante": 2, "round": 3, "reason": "enter", "dollars": 12, "reroll_cost": 5, "items": [{"kind": "card", "key": "j_greedy_joker", "cost": 6}, {"kind": "card", "key": "j_banner", "cost": 5}]}
+{"episode": 1, "step": 0, "ante": 1, "round": 1, "reason": "enter", "dollars": 9, "reroll_cost": 5, "items": [{"kind": "card", "key": "j_joker", "cost": 5}, {"kind": "card", "key": "j_banner", "cost": 4}]}

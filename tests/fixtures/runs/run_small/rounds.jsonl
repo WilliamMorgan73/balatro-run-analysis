@@ -1,5 +1,5 @@
-{"episode": 0, "ante": 1, "round": 1, "blind_key": "bl_small", "target": 300, "chips": 450, "beaten": true}
-{"episode": 0, "ante": 1, "round": 2, "blind_key": "bl_big", "target": 450, "chips": 500, "beaten": true}
-{"episode": 0, "ante": 2, "round": 4, "blind_key": "bl_big", "target": 1200, "chips": 600, "beaten": false}
-{"episode": 1, "ante": 1, "round": 2, "blind_key": "bl_big", "target": 450, "chips": 225, "beaten": false}
-{"episode": 2, "ante": 1, "round": 1, "blind_key": "bl_small", "target": 300, "chips": 100, "beaten": false}
+{"episode": 0, "ante": 1, "round": 1, "blind_key": "bl_small", "target": 300, "chips": 450, "beaten": true, "interest_cap": 25, "dollars_at_end": 5, "earn_blind": 3, "earn_hands": 2, "earn_discards": 0, "earn_interest": 0, "earn_jokers": 0, "earn_rent": 0, "earn_total": 5}
+{"episode": 0, "ante": 1, "round": 2, "blind_key": "bl_big", "target": 450, "chips": 500, "beaten": true, "interest_cap": 25, "dollars_at_end": 6, "earn_blind": 4, "earn_hands": 1, "earn_discards": 0, "earn_interest": 1, "earn_jokers": 0, "earn_rent": 0, "earn_total": 6}
+{"episode": 0, "ante": 2, "round": 4, "blind_key": "bl_big", "target": 1200, "chips": 600, "beaten": false, "interest_cap": 25, "dollars_at_end": null, "earn_blind": null, "earn_hands": null, "earn_discards": null, "earn_interest": null, "earn_jokers": null, "earn_rent": null, "earn_total": null}
+{"episode": 1, "ante": 1, "round": 2, "blind_key": "bl_big", "target": 450, "chips": 225, "beaten": false, "interest_cap": 25, "dollars_at_end": null, "earn_blind": null, "earn_hands": null, "earn_discards": null, "earn_interest": null, "earn_jokers": null, "earn_rent": null, "earn_total": null}
+{"episode": 2, "ante": 1, "round": 1, "blind_key": "bl_small", "target": 300, "chips": 100, "beaten": false, "interest_cap": 25, "dollars_at_end": null, "earn_blind": null, "earn_hands": null, "earn_discards": null, "earn_interest": null, "earn_jokers": null, "earn_rent": null, "earn_total": null}

@@ -31,6 +31,12 @@ def test_export_zip_contents(run):
         "tables/sell_then_buy__run_small.csv",
         "tables/cooccurrence__run_small.csv",
         "tables/action_by_ante__run_small.csv",
+        "runs/run_small/shop_offers.csv",
+        "tables/shop_visits.csv",
+        "tables/spend_by_category.csv",
+        "tables/income_breakdown.csv",
+        "tables/offer_conversion.csv",
+        "tables/economy_kpis.csv",
     } <= files
     readme = z.read("README.txt").decode()
     assert "runs: run_small" in readme
