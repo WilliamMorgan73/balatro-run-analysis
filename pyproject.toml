@@ -26,6 +26,8 @@ dev = [
 
 [tool.ruff]
 line-length = 100
+# Example scripts follow jackdaw's own style and import jackdaw
+extend-exclude = ["examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]

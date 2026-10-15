@@ -11,6 +11,7 @@ from itertools import combinations
 
 import pandas as pd
 
+from balatro_analysis import catalog
 from balatro_analysis.loader import Run
 
 BUY_ACTIONS = ("buy_card_0", "buy_card_1", "buy_pack_0", "buy_pack_1", "buy_voucher")
@@ -209,7 +210,7 @@ def joker_purchases(run: Run) -> pd.DataFrame:
     if run.steps is None or run.steps.empty:
         return pd.DataFrame(columns=["episode", "ante", "item_key"])
     s = run.steps
-    bought = s["action_name"].isin(BUY_ACTIONS) & s["item_key"].fillna("").str.startswith("j_")
+    bought = s["action_name"].isin(BUY_ACTIONS) & s["item_key"].map(catalog.is_joker)
     return s.loc[bought, ["episode", "step", "ante", "round", "item_key", "item_cost"]]
 
 
@@ -280,7 +281,7 @@ def sell_then_buy(run: Run) -> pd.DataFrame:
         for name, key in zip(ep["action_name"], ep["item_key"], strict=True):
             if name.startswith(SELL_JOKER_PREFIX):
                 pending = key
-            elif pending and name in BUY_ACTIONS and str(key).startswith("j_"):
+            elif pending and name in BUY_ACTIONS and catalog.is_joker(key):
                 pairs[(pending, key)] += 1
                 pending = None
     rows = [{"sold": s, "bought": b, "count": n} for (s, b), n in pairs.most_common()]

@@ -39,7 +39,7 @@ def reload_if_changed() -> None:
 
 reload_if_changed()
 
-from balatro_analysis import export, metrics, plots  # noqa: E402
+from balatro_analysis import catalog, export, metrics, plots  # noqa: E402
 from balatro_analysis.loader import Run, find_runs, load_run  # noqa: E402
 from balatro_analysis.names import Names  # noqa: E402
 from balatro_analysis.picker import PickerUnavailable, pick_directory  # noqa: E402
@@ -379,7 +379,7 @@ with tabs[6]:
             chart(plots.episode_money(timeline, names), f"episode {episode} money {run_name}")
             timeline = timeline.assign(
                 icon=timeline["item_key"].map(
-                    lambda k: sprites.data_uri(k) if sprites and str(k).startswith("j_") else None
+                    lambda k: sprites.data_uri(k) if sprites and catalog.is_joker(k) else None
                 )
             )
             order = ["step", "ante", "round", "dollars_before", "action_name", "icon", "item_key"]

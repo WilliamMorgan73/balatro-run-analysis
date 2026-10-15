@@ -1,8 +1,9 @@
 # Balatro run analysis
 
-Streamlit dashboard for the shop-only RL training runs produced by
-`scripts/train_random_shop.py` in
-[jackdaw-balatro](../jackdaw-balatro) (branch `test/shop-rl-feasibility`).
+Streamlit dashboard for shop-only RL training runs on
+[Jackdaw](https://github.com/TylerFlar/jackdaw-balatro), a Python Balatro simulator.
+The runs come from `scripts/train_random_shop.py`, included here under
+[`examples/jackdaw/`](examples/jackdaw) (see [Producing runs](#producing-runs)).
 
 ## Usage
 
@@ -16,6 +17,40 @@ Choose the runs folder in the sidebar with **Browse…** (opens your desktop's f
 dialog: kdialog, zenity, or Tk as a fallback) or type a path. Pick any number of runs
 to overlay, filter by deck and stake, and use **Reload runs** after a training run
 finishes.
+
+## Producing runs
+
+The dashboard reads what two scripts write inside a jackdaw-balatro checkout:
+
+| Script | What it does |
+|---|---|
+| `scripts/train_random_shop.py` | Shop-only training harness (17 shop actions, random shop agent, random or Jackdaw `smart_agent` play). Writes `runs/<run-name>/`. |
+| `scripts/verify_shop_rl.py` | Feasibility checks for a shop-only RL wrapper (raw-state keys, shop indexing, env deepcopy, oracle timing, ...). |
+
+**Option A: use the fork that already has them.**
+[WilliamMorgan73/jackdaw-balatro](https://github.com/WilliamMorgan73/jackdaw-balatro):
+`main` is upstream Jackdaw plus these scripts (see its `FORK.md`).
+
+**Option B: paste these files into Jackdaw.** `examples/jackdaw/` mirrors the
+jackdaw-balatro repo root, so copy its contents straight into your checkout:
+
+```bash
+cp -r examples/jackdaw/. /path/to/jackdaw-balatro/
+# -> /path/to/jackdaw-balatro/scripts/train_random_shop.py
+# -> /path/to/jackdaw-balatro/scripts/verify_shop_rl.py
+```
+
+Then, from the jackdaw-balatro folder:
+
+```bash
+uv run python scripts/train_random_shop.py --episodes 500 --play smart
+uv run python scripts/train_random_shop.py --episodes 500 --play smart \
+    --decks b_red,b_blue,b_black --stakes 1,2 --run-name smart_mixed
+uv run python scripts/verify_shop_rl.py
+```
+
+`tests/test_examples.py` fails if the copies here and in `../jackdaw-balatro/scripts/`
+drift apart. Edit them in one place and copy the file across.
 
 ## Names: presenting vs analysing
 
@@ -34,8 +69,8 @@ Sidebar → **Export**, always for the current run/episode/deck/stake selection:
 - **All charts (ZIP)**: every chart currently shown, as PNG (3200x1800) and/or SVG, in a
   light theme for slides/LaTeX. Each chart also has its own **⬇ Export chart** button.
 
-Chart rendering uses kaleido with your local Chrome/Chromium. If none is found the chart buttons
-say so; `uv run kaleido_get_chrome` downloads one.
+Chart rendering uses kaleido with your local Chrome/Chromium. If none is found the chart
+buttons say so; `uv run kaleido_get_chrome` downloads one.
 
 ## Joker and deck icons
 
@@ -44,13 +79,13 @@ this repo. The game is found automatically in Steam libraries (Linux, Flatpak, m
 Windows), or set `BALATRO_PATH` / the *Game assets* sidebar field to the install folder
 or `Balatro.exe`. Without the game the dashboard shows names only.
 
-Names and sprite positions come from `src/balatro_analysis/data/{centers,blinds}.json`, generated
-from jackdaw's data by `uv run python scripts/sync_centers.py`.
+Names and sprite positions come from `src/balatro_analysis/data/{centers,blinds}.json`,
+generated from jackdaw's data by `uv run python scripts/sync_centers.py`.
 
 ## Run format
 
-Any directory containing `episodes.csv` is a run. The other files are optional,
-so older runs (only `episodes.csv`, no deck column) still load; tabs that need missing data say so.
+Any directory containing `episodes.csv` is a run. The other files are optional, so older
+runs (only `episodes.csv`, no deck column) still load; tabs that need missing data say so.
 
 | File | One row per | Used for |
 |---|---|---|
@@ -81,12 +116,16 @@ src/balatro_analysis/names.py   in-game names vs exact keys (the sidebar toggle)
 src/balatro_analysis/export.py  data ZIP and PNG/SVG chart export
 src/balatro_analysis/sprites.py icons from the local game install
 src/balatro_analysis/picker.py  native folder dialog
+scripts/sync_centers.py         regenerate the name/sprite catalog from jackdaw
+examples/jackdaw/               files to paste into a jackdaw-balatro checkout
 tests/                          pytest + Streamlit AppTest on a small fixture run
 ```
 
+## Development
+
 ```bash
 uv run pytest            # fast suite
-uv run pytest -m slow    # also renders real PNG/SVG with kaleido
+uv run pytest -m slow    # + real PNG/SVG render and a train -> load run through ../jackdaw-balatro
 uv run ruff check .
 ```
 
