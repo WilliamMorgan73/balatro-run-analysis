@@ -1,0 +1,5 @@
+{"episode": 0, "ante": 1, "round": 1, "blind_key": "bl_small", "target": 300, "chips": 450, "beaten": true}
+{"episode": 0, "ante": 1, "round": 2, "blind_key": "bl_big", "target": 450, "chips": 500, "beaten": true}
+{"episode": 0, "ante": 2, "round": 4, "blind_key": "bl_big", "target": 1200, "chips": 600, "beaten": false}
+{"episode": 1, "ante": 1, "round": 2, "blind_key": "bl_big", "target": 450, "chips": 225, "beaten": false}
+{"episode": 2, "ante": 1, "round": 1, "blind_key": "bl_small", "target": 300, "chips": 100, "beaten": false}

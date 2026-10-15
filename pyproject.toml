@@ -1,0 +1,33 @@
+[project]
+name = "balatro-analysis"
+version = "0.1.0"
+description = "Streamlit dashboard for jackdaw-balatro shop-RL training runs"
+readme = "README.md"
+authors = [
+    { name = "Will Morgan", email = "sghp78@durham.ac.uk" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=3.0.6",
+    "plotly>=7.1.0",
+    "streamlit>=1.66.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
