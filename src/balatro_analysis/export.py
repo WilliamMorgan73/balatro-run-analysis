@@ -19,7 +19,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-from balatro_analysis import actions, economy, metrics, stats
+from balatro_analysis import actions, economy, latex, metrics, stats
 from balatro_analysis.loader import Run
 from balatro_analysis.names import DEFAULT_KEYS, Names
 
@@ -135,7 +135,8 @@ def export_zip(
     window: int = 50,
     top: int = 15,
 ) -> bytes:
-    """ZIP with ``runs/<run>/{episodes,steps,rounds}.csv``, ``tables/*.csv`` and a README."""
+    """ZIP with ``runs/<run>/{episodes,steps,rounds}.csv``, ``tables/*.csv``,
+    ``latex/*.tex`` (the main result tables) and a README."""
     buf = io.BytesIO()
     written: list[str] = []
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -155,6 +156,9 @@ def export_zip(
                 put(f"{base}/shop_offers.csv", with_names(economy.offers(r), {"key": "item"}))
         for name, df in computed_tables(runs, window, top).items():
             put(f"tables/{name}.csv", df)
+        for name, tex in latex.tables(runs).items():
+            z.writestr(f"latex/{name}.tex", tex)
+            written.append(f"latex/{name}.tex")
 
         lines = [
             "Balatro run analysis export",
@@ -165,6 +169,8 @@ def export_zip(
             "",
             "Key columns (j_..., b_..., bl_..., buy_card_0) are exact game keys;",
             "each has a <column>_name twin with the in-game name. Lists are ';'-separated.",
+            "latex/*.tex are booktabs tables for \\input (need booktabs and graphicx);",
+            "comparisons use the first selected run / group as the baseline.",
             "",
             "Files:",
             *(f"  {w}" for w in written),

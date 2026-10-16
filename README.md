@@ -71,6 +71,10 @@ Sidebar → **Export**, always for the current run/episode/deck/stake selection:
   for every table and chart. Each key column has a `<column>_name` twin, so the files work for
   both analysis and slides, whatever the toggle says. A `README.txt` records the selection.
   `run_comparison.csv` uses the first selected run as the baseline.
+  `latex/*.tex` holds the main result tables (summary, CIs, run comparison, and the group
+  summary/comparison when runs share a `--group`) as booktabs floats with in-game names and
+  `mean [95% CI]` cells, ready for `\input`. They need `\usepackage{booktabs,graphicx}`;
+  wide tables are scaled to `\linewidth`. Captions and `tab:<name>` labels are included.
 - **All charts (ZIP)**: every chart currently shown, as PNG (3200x1800) and/or SVG, in a
   light theme for slides/LaTeX. Each chart also has its own **⬇ Export chart** button.
 
