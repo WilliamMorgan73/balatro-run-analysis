@@ -341,79 +341,147 @@ with tabs[0]:
                 f"{eval_rounds[0] if eval_rounds else 'all'}. Runs played the same games, "
                 "so the paired comparison below matches them game by game."
             )
-        summary = metrics.summary(runs)
-        table(
-            summary,
-            {"decks": "items", "stakes": "stakes"},
-            column_config={
-                names.column("mean ante"): st.column_config.NumberColumn(format="%.2f"),
-                names.column("win rate"): st.column_config.NumberColumn(format="percent"),
-                names.column("mean return"): st.column_config.NumberColumn(format="%.2f"),
-                names.column("shop steps / ep"): st.column_config.NumberColumn(format="%.1f"),
-                names.column("s / ep"): st.column_config.NumberColumn(format="%.3f"),
-            },
+        group_map = stats.groups(runs)
+        by_group = (
+            len(group_map) < len(runs)
+            and st.radio(
+                "Compare",
+                ["Runs", "Groups"],
+                horizontal=True,
+                key="compare_by",
+                help="Groups: runs sharing --group (one config, several training seeds) "
+                "are averaged, with CIs across seeds.",
+            )
+            == "Groups"
         )
-        ci = stats.summary_ci(runs)
-        if len(ci):
-            st.caption(
-                "95% confidence intervals of the mean: bootstrap for ante and return, "
-                "Wilson for win rate (stays sensible with no wins yet)."
-            )
-            num = st.column_config.NumberColumn(format="%.3f")
-            table(
-                ci,
-                column_config={names.column(c): num for c in ("mean", "ci_low", "ci_high", "std")},
-            )
-        if len(runs) > 1:
-            baseline = st.selectbox(
-                "Compare against baseline", [r.name for r in runs], key="baseline_run"
-            )
-            comparison = stats.compare(runs, baseline)
-            st.caption(
-                "Ante reached vs the baseline. **Unpaired**: difference in mean ante with a "
-                "bootstrap 95% CI, Mann-Whitney U and its rank-biserial effect size "
-                "(+1: this run always gets further). Win rate by Fisher's exact test. "
-                "**Paired**: episodes played on the same seed (and deck/stake) in both runs, "
-                "mean per-seed difference and Wilcoxon signed-rank. Pairing removes "
-                "seed-to-seed luck, so prefer it when the runs share seeds."
-            )
+        if by_group:
             num = st.column_config.NumberColumn(format="%.3f")
             pval = st.column_config.NumberColumn(format="%.2g")
-            table(
-                comparison,
-                column_config={
-                    names.column(c): num
-                    for c in (
-                        "mean_ante_diff",
-                        "diff_ci_low",
-                        "diff_ci_high",
-                        "rank_biserial",
-                        "win_rate_diff",
-                        "paired_mean_diff",
-                    )
-                }
-                | {names.column(c): pval for c in ("mann_whitney_p", "fisher_p", "wilcoxon_p")},
+            st.caption(
+                "Each run's mean, then the mean over a group's runs with a Student-t 95% CI "
+                "across runs: the interval shows how much results vary between training "
+                "seeds, not how many episodes were played."
             )
+            table(
+                stats.group_summary(runs),
+                column_config={
+                    names.column(c): num for c in ("mean", "ci_low", "ci_high", "std_across_runs")
+                },
+            )
+            with st.expander("Runs in each group"):
+                table(
+                    stats.run_means(runs),
+                    column_config={names.column(c): num for c in stats.OUTCOMES.values()},
+                )
+            if len(group_map) > 1:
+                baseline = st.selectbox(
+                    "Compare against baseline group", list(group_map), key="baseline_group"
+                )
+                st.caption(
+                    "Difference in the mean of the runs' means vs the baseline group, with "
+                    "Welch's t-test and its 95% CI (each run is one observation)."
+                )
+                gcomp = stats.compare_groups(runs, baseline)
+                table(
+                    gcomp,
+                    column_config={
+                        names.column(c): pval if c.endswith("_p") else num
+                        for c in gcomp.columns
+                        if c.endswith(("_diff", "_low", "_high", "_p"))
+                    },
+                )
+        else:
+            summary = metrics.summary(runs)
+            table(
+                summary,
+                {"decks": "items", "stakes": "stakes"},
+                column_config={
+                    names.column("mean ante"): st.column_config.NumberColumn(format="%.2f"),
+                    names.column("win rate"): st.column_config.NumberColumn(format="percent"),
+                    names.column("mean return"): st.column_config.NumberColumn(format="%.2f"),
+                    names.column("shop steps / ep"): st.column_config.NumberColumn(format="%.1f"),
+                    names.column("s / ep"): st.column_config.NumberColumn(format="%.3f"),
+                },
+            )
+            ci = stats.summary_ci(runs)
+            if len(ci):
+                st.caption(
+                    "95% confidence intervals of the mean: bootstrap for ante and return, "
+                    "Wilson for win rate (stays sensible with no wins yet)."
+                )
+                num = st.column_config.NumberColumn(format="%.3f")
+                table(
+                    ci,
+                    column_config={
+                        names.column(c): num for c in ("mean", "ci_low", "ci_high", "std")
+                    },
+                )
+            if len(runs) > 1:
+                baseline = st.selectbox(
+                    "Compare against baseline", [r.name for r in runs], key="baseline_run"
+                )
+                comparison = stats.compare(runs, baseline)
+                st.caption(
+                    "Ante reached vs the baseline. **Unpaired**: difference in mean ante with a "
+                    "bootstrap 95% CI, Mann-Whitney U and its rank-biserial effect size "
+                    "(+1: this run always gets further). Win rate by Fisher's exact test. "
+                    "**Paired**: episodes played on the same seed (and deck/stake) in both runs, "
+                    "mean per-seed difference and Wilcoxon signed-rank. Pairing removes "
+                    "seed-to-seed luck, so prefer it when the runs share seeds."
+                )
+                num = st.column_config.NumberColumn(format="%.3f")
+                pval = st.column_config.NumberColumn(format="%.2g")
+                table(
+                    comparison,
+                    column_config={
+                        names.column(c): num
+                        for c in (
+                            "mean_ante_diff",
+                            "diff_ci_low",
+                            "diff_ci_high",
+                            "rank_biserial",
+                            "win_rate_diff",
+                            "paired_mean_diff",
+                        )
+                    }
+                    | {names.column(c): pval for c in ("mann_whitney_p", "fisher_p", "wilcoxon_p")},
+                )
         if eval_runs:
             st.subheader("Evaluation on fixed seeds")
-            ecurve = stats.eval_curve(eval_runs)
+            ecurve = stats.group_eval_curve(eval_runs) if by_group else stats.eval_curve(eval_runs)
             if need(ecurve, "eval episodes for this selection"):
                 emetric = st.radio(
                     "Eval metric", ["mean ante", "win rate"], horizontal=True, key="eval_metric"
                 )
-                chart(plots.eval_curve(ecurve, emetric, names), f"eval {emetric}")
+                fig = plots.eval_curve(ecurve, emetric, names)
+                if by_group:
+                    fig.update_layout(legend_title_text="Group")
+                chart(fig, f"eval {emetric}")
                 st.caption(
-                    "Greedy episodes on the same eval seeds after each block of training "
-                    "(bootstrap CI for ante, Wilson for win rate). To compare runs game by "
-                    "game on one round, set **Episodes** to *Evaluation* in the sidebar."
+                    "Greedy episodes on the same eval seeds after each block of training ("
+                    + (
+                        "each group's runs averaged, Student-t CI across runs"
+                        if by_group
+                        else "bootstrap CI for ante, Wilson for win rate"
+                    )
+                    + "). To compare runs game by game on one round, set **Episodes** to "
+                    "*Evaluation* in the sidebar."
                 )
         if not eval_mode:
-            curve = metrics.learning_curve(runs, window)
+            if by_group:
+                curve = stats.group_learning_curve(runs, window)
+                band_help = "Student-t 95% CI across the group's runs"
+            else:
+                curve = metrics.learning_curve(runs, window)
+                band_help = "mean ± 1.96 SE over the window"
             if need(curve, "episodes for this selection"):
                 c1, c2 = st.columns([3, 1])
                 metric = c1.radio("Curve", list(metrics.CURVE_METRICS), horizontal=True)
-                band = c2.checkbox("95% band", value=True, help="mean ± 1.96 SE over the window")
-                chart(plots.learning_curve(curve, metric, names, band), f"learning curve {metric}")
+                band = c2.checkbox("95% band", value=True, help=band_help)
+                fig = plots.learning_curve(curve, metric, names, band)
+                if by_group:
+                    fig.update_layout(legend_title_text="Group")
+                chart(fig, f"learning curve {metric}")
         if any(len(r.episodes) for r in runs):
             chart(plots.ante_distribution(metrics.ante_distribution(runs), names), "ante reached")
         with st.expander("Run configs"):

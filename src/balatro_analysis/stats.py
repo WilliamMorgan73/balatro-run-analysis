@@ -6,10 +6,13 @@ exports don't change between reruns.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 from scipy import stats as sps
 
+from balatro_analysis import metrics
 from balatro_analysis.loader import Run
 
 LEVEL = 0.95
@@ -227,6 +230,159 @@ def compare(runs: list[Run], baseline: str) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Groups: one config trained with several seeds (``--group``)
+# ---------------------------------------------------------------------------
+
+
+def group_of(run: Run) -> str:
+    """The run's ``--group``, or its own name when it has none."""
+    return run.config.get("group") or run.name
+
+
+def groups(runs: list[Run]) -> dict[str, list[Run]]:
+    """Runs by group, in order of first appearance."""
+    out: dict[str, list[Run]] = {}
+    for r in runs:
+        out.setdefault(group_of(r), []).append(r)
+    return out
+
+
+def t_ci(x: np.ndarray | pd.Series, level: float = LEVEL) -> tuple[float, float]:
+    """Student-t CI of the mean; (nan, nan) for fewer than 2 values.  Used across
+    seeds, where there are too few values for a bootstrap."""
+    x = np.asarray(x, dtype=float)
+    x = x[~np.isnan(x)]
+    if len(x) < 2:
+        return float("nan"), float("nan")
+    half = sps.t.ppf(1 - (1 - level) / 2, len(x) - 1) * x.std(ddof=1) / np.sqrt(len(x))
+    return float(x.mean() - half), float(x.mean() + half)
+
+
+def run_means(runs: list[Run]) -> pd.DataFrame:
+    """One row per run: its group, training seed, episodes and mean of each outcome."""
+    rows = []
+    for r in runs:
+        e = r.episodes
+        rows.append(
+            {
+                "group": group_of(r),
+                "run": r.name,
+                "seed": r.config.get("seed"),
+                "episodes": len(e),
+                **{
+                    label: e[col].astype(float).mean() if len(e) else float("nan")
+                    for col, label in OUTCOMES.items()
+                    if col in e
+                },
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def group_summary(runs: list[Run]) -> pd.DataFrame:
+    """Per group and outcome: the mean over its runs' means, with a t CI across
+    runs (seeds), so the interval reflects seed-to-seed variation rather than
+    the number of episodes pooled."""
+    means = run_means(runs)
+    rows = []
+    for group, g in means.groupby("group", sort=False):
+        for label in OUTCOMES.values():
+            if label not in g:
+                continue
+            x = g[label].to_numpy(dtype=float)
+            lo, hi = t_ci(x)
+            rows.append(
+                {
+                    "group": group,
+                    "outcome": label,
+                    "runs": len(x),
+                    "episodes": int(g["episodes"].sum()),
+                    "mean": float(np.nanmean(x)) if len(x) else float("nan"),
+                    "ci_low": lo,
+                    "ci_high": hi,
+                    "std_across_runs": float(np.std(x, ddof=1)) if len(x) > 1 else float("nan"),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _welch(a: np.ndarray, b: np.ndarray) -> tuple[float, float, float]:
+    """Welch's t-test: (p, ci_low, ci_high) for mean(a) - mean(b); nan if either has < 2."""
+    if len(a) < 2 or len(b) < 2 or (np.std(a) == 0 and np.std(b) == 0):
+        return float("nan"), float("nan"), float("nan")
+    with warnings.catch_warnings():
+        # one group can have no spread (e.g. every seed reaches ante 1); Welch still
+        # works off the other group's variance, scipy just warns about it
+        warnings.simplefilter("ignore", RuntimeWarning)
+        res = sps.ttest_ind(a, b, equal_var=False)
+        ci = res.confidence_interval(LEVEL)
+    return float(res.pvalue), float(ci.low), float(ci.high)
+
+
+def compare_groups(runs: list[Run], baseline: str) -> pd.DataFrame:
+    """Each group against the ``baseline`` group, on the per-run means: difference
+    in mean ante and win rate with Welch's t-test and CI (seeds as the sample)."""
+    means = run_means(runs)
+    base = means[means["group"] == baseline]
+    if base.empty:
+        return pd.DataFrame()
+    rows = []
+    for group, g in means.groupby("group", sort=False):
+        if group == baseline:
+            continue
+        row = {"group": group, "baseline": baseline, "runs": len(g), "baseline_runs": len(base)}
+        for label, key in (("ante reached", "ante"), ("win rate", "win_rate")):
+            a = g[label].to_numpy(dtype=float)
+            b = base[label].to_numpy(dtype=float)
+            p, lo, hi = _welch(a, b)
+            row |= {
+                f"{key}_diff": a.mean() - b.mean(),
+                f"{key}_ci_low": lo,
+                f"{key}_ci_high": hi,
+                f"{key}_welch_p": p,
+            }
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _group_curve(
+    per_run: pd.DataFrame, group_by_run: dict[str, str], x: str, metrics: list[str]
+) -> pd.DataFrame:
+    """Average per-run curves within each group at each ``x``, with a t band across
+    runs.  ``train_episodes`` / ``games`` (eval curves) are carried over / summed.
+    The result's ``run`` column holds the group, so the run plots can draw it."""
+    if per_run.empty:
+        return pd.DataFrame()
+    per_run = per_run.assign(group=per_run["run"].map(group_by_run))
+    rows = []
+    for (group, xv), g in per_run.groupby(["group", x], sort=False):
+        row = {"run": group, x: xv, "runs": len(g)}
+        if "train_episodes" in g:
+            row["train_episodes"] = int(g["train_episodes"].iloc[0])
+        if "games" in g:
+            row["games"] = int(g["games"].sum())
+        for m in metrics:
+            lo, hi = t_ci(g[m])
+            row |= {m: g[m].mean(), f"{m} low": lo, f"{m} high": hi}
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values(["run", x]).reset_index(drop=True)
+
+
+def group_learning_curve(runs: list[Run], window: int) -> pd.DataFrame:
+    """Rolling learning curve averaged over each group's runs, band across runs."""
+    per_run = metrics.learning_curve(runs, window)
+    by_run = {r.name: group_of(r) for r in runs}
+    return _group_curve(per_run, by_run, "episode", list(metrics.CURVE_METRICS))
+
+
+def group_eval_curve(eval_runs: list[Run]) -> pd.DataFrame:
+    """``eval_curve`` averaged over each group's runs at each eval round, band
+    across runs; ``games`` is the total over the runs."""
+    by_run = {r.name: group_of(r) for r in eval_runs}
+    return _group_curve(eval_curve(eval_runs), by_run, "eval_round", ["mean ante", "win rate"])
 
 
 def spearman(x: pd.Series, y: pd.Series) -> tuple[float, float]:

@@ -60,10 +60,18 @@ def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[st
         "summary_ci": stats.summary_ci(runs),
         # baseline = the first selected run; the dashboard lets you pick another
         "run_comparison": stats.compare(runs, runs[0].name) if runs else pd.DataFrame(),
+        # groups (--group): CIs across each group's runs; baseline = the first group
+        "group_summary": stats.group_summary(runs),
+        "group_comparison": (
+            stats.compare_groups(runs, stats.group_of(runs[0])) if runs else pd.DataFrame()
+        ),
+        "group_run_means": stats.run_means(runs),
         "by_deck": with_names(metrics.by_deck(runs)),
         "learning_curve": metrics.learning_curve(runs, window),
         # eval runs, or each training run's eval episodes (runs without them are skipped)
         "eval_curve": stats.eval_curve([r.eval or r for r in runs]),
+        "group_eval_curve": stats.group_eval_curve([r.eval or r for r in runs]),
+        "group_learning_curve": stats.group_learning_curve(runs, window),
         "ante_distribution": metrics.ante_distribution(runs),
         "action_frequency": with_names(metrics.action_frequency(runs), {"action": "action"}),
         "action_family_share": actions.family_share(runs),

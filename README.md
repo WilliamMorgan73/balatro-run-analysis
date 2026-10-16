@@ -48,6 +48,8 @@ uv run python scripts/train_random_shop.py --episodes 500 --play smart \
     --decks b_red,b_blue,b_black --stakes 1,2 --run-name smart_mixed
 uv run python scripts/train_random_shop.py --episodes 500 --play smart \
     --eval-every 50 --eval-episodes 20      # + greedy eval on fixed seeds
+uv run python scripts/train_random_shop.py --episodes 500 --play smart \
+    --seed 1 --group smart_random --run-name smart_random_s1   # one seed of a group
 uv run python scripts/verify_shop_rl.py
 ```
 
@@ -123,7 +125,10 @@ policy. Paired comparisons then match the runs game by game.
   Wilcoxon signed-rank test on episodes both runs played on the same seed/deck/stake);
   rolling learning curve (ante / win rate / return) with a 95% band; ante-reached distribution;
   for runs with eval episodes, eval mean ante / win rate on the fixed seeds against training
-  episodes, with a 95% CI
+  episodes, with a 95% CI. When runs share a `--group` (one config, several training seeds), a
+  **Compare: Runs / Groups** switch averages each group's runs: summary with a Student-t CI
+  across seeds, Welch's t-test against a baseline group, and group learning / eval curves with
+  bands across seeds. Use groups for claims about a method, since a single training run can be lucky.
 - **Decks**: deck cards with episodes and mean ante; mean ante by deck and stake per run
 - **Actions**: KPI strip (decisions per visit, visits leaving at once, visits with a buy, most
   common first action) and sub-tabs:

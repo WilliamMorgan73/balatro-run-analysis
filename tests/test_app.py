@@ -323,3 +323,16 @@ def test_every_tab_renders_in_eval_mode(eval_runs_dir, tab):
     at.run()
     at.text_input(key="runs_dir").set_value(str(eval_runs_dir)).run()
     assert not at.exception
+
+
+def test_app_groups_mode(group_runs_dir):
+    at = _run(group_runs_dir)
+    assert not at.exception
+    at.radio(key="compare_by").set_value("Groups").run()
+    assert not at.exception
+    assert any(s.label == "Compare against baseline group" for s in at.selectbox)
+
+
+def test_app_no_groups_toggle_without_groups(runs_dir):
+    at = _run(runs_dir)
+    assert not [r for r in at.radio if r.label == "Compare"]

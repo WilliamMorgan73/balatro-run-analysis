@@ -1,4 +1,5 @@
 import io
+import json
 import shutil
 import zipfile
 from pathlib import Path
@@ -69,6 +70,22 @@ def eval_runs_dir(tmp_path: Path) -> Path:
     root = tmp_path / "eval_runs"
     _with_eval(root / "run_a")
     _with_eval(root / "run_b", ante_shift=1)
+    return root
+
+
+@pytest.fixture
+def group_runs_dir(tmp_path: Path) -> Path:
+    """Group "a" (3 seeds, run_small's antes +0/+1/+2) and group "b" (2 seeds, +3/+4)."""
+    root = tmp_path / "group_runs"
+    for group, shifts in (("a", (0, 1, 2)), ("b", (3, 4))):
+        for seed, shift in enumerate(shifts):
+            d = root / f"{group}_s{seed}"
+            shutil.copytree(RUNS_DIR / "run_small", d)
+            e = pd.read_csv(d / "episodes.csv")
+            e["ante"] += shift
+            e.to_csv(d / "episodes.csv", index=False)
+            config = json.loads((d / "config.json").read_text())
+            (d / "config.json").write_text(json.dumps(config | {"group": group, "seed": seed}))
     return root
 
 
