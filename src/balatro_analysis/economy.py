@@ -103,6 +103,25 @@ def interest_cap(run: Run) -> int:
     return DEFAULT_INTEREST_CAP
 
 
+def visit_interest_cap(run: Run, visits: pd.DataFrame) -> pd.Series:
+    """The interest cap at the cash-out after each visit (``episode``, ``round``).
+
+    Seed Money and Money Tree raise the cap mid-run, so it's read per episode:
+    from the next blind's row (the cash-out the exit money earns interest at),
+    else the visit's own round, else the run's usual cap.
+    """
+    default = interest_cap(run)
+    if run.rounds is None or "interest_cap" not in run.rounds:
+        return pd.Series(default, index=visits.index)
+    caps = run.rounds.dropna(subset=["interest_cap"]).drop_duplicates(["episode", "round"])
+    caps = caps.set_index(["episode", "round"])["interest_cap"]
+    nxt = pd.MultiIndex.from_arrays([visits["episode"], visits["round"] + 1])
+    own = pd.MultiIndex.from_arrays([visits["episode"], visits["round"]])
+    cap = caps.reindex(nxt).to_numpy()
+    cap = np.where(np.isnan(cap), caps.reindex(own).to_numpy(), cap)
+    return pd.Series(np.nan_to_num(cap, nan=default).astype(int), index=visits.index)
+
+
 # ---------------------------------------------------------------------------
 # Shop visits
 # ---------------------------------------------------------------------------
@@ -136,7 +155,7 @@ def shop_visits(runs: list[Run]) -> pd.DataFrame:
             buys=("is_buy", "sum"),
             decisions=("step", "size"),
         )
-        cap = interest_cap(r)
+        cap = visit_interest_cap(r, v)
         v["interest_cap"] = cap
         v["est_interest"] = np.minimum(v["exit"] // 5, cap // 5).clip(lower=0)
         v["at_cap"] = v["exit"] >= cap
@@ -210,8 +229,10 @@ def income_by_source(runs: list[Run]) -> pd.DataFrame:
                 if col not in paid:
                     continue  # older logs
                 total = paid[col].sum() * (-1 if col == "earn_rent" else 1)
+                # Rent is charged at the end of the round, before the cash-out
+                kind = "end of round" if col == "earn_rent" else "cash-out"
                 if total:
-                    rows.append({"source": label, "kind": "cash-out", "per_episode": total / n})
+                    rows.append({"source": label, "kind": kind, "per_episode": total / n})
         if rows:
             frames.append(pd.DataFrame(rows).assign(run=r.name))
     return _concat(frames)
