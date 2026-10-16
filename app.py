@@ -127,6 +127,7 @@ CHARTS: dict[str, object] = {}
 LOG_VERSIONS = {
     2: "cash-out breakdown and shops.jsonl",
     3: "legal actions per step",
+    4: "eval episodes on fixed seeds (--eval-every)",
 }
 
 
@@ -234,12 +235,33 @@ with st.sidebar:
     if not picked:
         st.stop()
     pkg_mtime = package_mtime()
+
+    def run_mtime(path: Path) -> float:
+        files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
+        return max(f.stat().st_mtime for f in files if f.is_file())
+
     runs = [
-        cached_run(
-            str(run_dirs[n]), str(root), (run_dirs[n] / "episodes.csv").stat().st_mtime, pkg_mtime
-        )
-        for n in picked
+        cached_run(str(run_dirs[n]), str(root), run_mtime(run_dirs[n]), pkg_mtime) for n in picked
     ]
+    train_runs = runs
+
+    # Eval episodes (greedy, fixed seeds) replace the training episodes in every tab
+    with_eval = [r for r in runs if r.eval is not None]
+    eval_mode = bool(with_eval) and (
+        st.radio(
+            "Episodes",
+            ["Training", "Evaluation"],
+            horizontal=True,
+            key="phase",
+            help="Evaluation: greedy episodes on the fixed eval seeds (--eval-every). "
+            "Every run plays the same eval games, so comparisons pair game by game.",
+        )
+        == "Evaluation"
+    )
+    if eval_mode:
+        if missing := [r.name for r in runs if r.eval is None]:
+            st.caption("No eval episodes, not shown: " + ", ".join(missing))
+        runs = [r.eval for r in with_eval]
 
     all_decks = sorted({d for r in runs for d in r.episodes["deck"]})
     all_stakes = sorted({s for r in runs for s in r.episodes["stake"]})
@@ -247,7 +269,20 @@ with st.sidebar:
     stakes = st.multiselect("Stakes", all_stakes, default=all_stakes, format_func=names.stake)
 
     max_ep = int(max(r.episodes["episode"].max() for r in runs))
-    ep_range = st.slider("Episodes", 0, max(max_ep, 1), (0, max_ep))
+    eval_rounds = None
+    if eval_mode:
+        ep_range = (0, max_ep)
+        all_rounds = sorted({int(x) for r in runs for x in r.episodes["eval_round"]})
+        eval_round = st.selectbox(
+            "Eval round",
+            ["All", *all_rounds],
+            index=len(all_rounds),
+            help="Eval round n is played after the training episodes shown in the Overview "
+            "eval chart. The last round scores the final policy.",
+        )
+        eval_rounds = None if eval_round == "All" else [eval_round]
+    else:
+        ep_range = st.slider("Episodes", 0, max(max_ep, 1), (0, max_ep))
     window = st.slider("Rolling window", 1, max(2, max_ep + 1), min(50, max_ep + 1))
     if st.button("Reload runs"):
         st.cache_data.clear()
@@ -265,7 +300,15 @@ with st.sidebar:
 
     export_area = st.container()  # filled at the end, once every chart is registered
 
-runs = [metrics.filter_episodes(r, *ep_range, decks=decks, stakes=stakes) for r in runs]
+runs = [
+    metrics.filter_episodes(r, *ep_range, decks=decks, stakes=stakes, eval_rounds=eval_rounds)
+    for r in runs
+]
+eval_runs = [
+    metrics.filter_episodes(r.eval, 0, float("inf"), decks=decks, stakes=stakes)
+    for r in train_runs
+    if r.eval is not None
+]
 run_names = [r.name for r in runs]
 by_name = {r.name: r for r in runs}
 no_steps = any(r.steps is None for r in runs)
@@ -292,6 +335,12 @@ tabs = st.tabs(
 # --- Overview -------------------------------------------------------------
 with tabs[0]:
     if tabs[0].open:
+        if eval_mode:
+            st.info(
+                "Showing **eval episodes** (greedy, fixed seeds), eval round "
+                f"{eval_rounds[0] if eval_rounds else 'all'}. Runs played the same games, "
+                "so the paired comparison below matches them game by game."
+            )
         summary = metrics.summary(runs)
         table(
             summary,
@@ -345,12 +394,27 @@ with tabs[0]:
                 }
                 | {names.column(c): pval for c in ("mann_whitney_p", "fisher_p", "wilcoxon_p")},
             )
-        curve = metrics.learning_curve(runs, window)
-        if need(curve, "episodes for this selection"):
-            c1, c2 = st.columns([3, 1])
-            metric = c1.radio("Curve", list(metrics.CURVE_METRICS), horizontal=True)
-            band = c2.checkbox("95% band", value=True, help="mean ± 1.96 SE over the window")
-            chart(plots.learning_curve(curve, metric, names, band), f"learning curve {metric}")
+        if eval_runs:
+            st.subheader("Evaluation on fixed seeds")
+            ecurve = stats.eval_curve(eval_runs)
+            if need(ecurve, "eval episodes for this selection"):
+                emetric = st.radio(
+                    "Eval metric", ["mean ante", "win rate"], horizontal=True, key="eval_metric"
+                )
+                chart(plots.eval_curve(ecurve, emetric, names), f"eval {emetric}")
+                st.caption(
+                    "Greedy episodes on the same eval seeds after each block of training "
+                    "(bootstrap CI for ante, Wilson for win rate). To compare runs game by "
+                    "game on one round, set **Episodes** to *Evaluation* in the sidebar."
+                )
+        if not eval_mode:
+            curve = metrics.learning_curve(runs, window)
+            if need(curve, "episodes for this selection"):
+                c1, c2 = st.columns([3, 1])
+                metric = c1.radio("Curve", list(metrics.CURVE_METRICS), horizontal=True)
+                band = c2.checkbox("95% band", value=True, help="mean ± 1.96 SE over the window")
+                chart(plots.learning_curve(curve, metric, names, band), f"learning curve {metric}")
+        if any(len(r.episodes) for r in runs):
             chart(plots.ante_distribution(metrics.ante_distribution(runs), names), "ante reached")
         with st.expander("Run configs"):
             for r in runs:
@@ -912,7 +976,11 @@ with tabs[7]:
 with export_area, st.expander("Export"):
     selection = {
         "runs": ", ".join(run_names),
-        "episodes": f"{ep_range[0]}-{ep_range[1]}",
+        "episodes": (
+            f"eval round {eval_rounds[0] if eval_rounds else 'all'}"
+            if eval_mode
+            else f"{ep_range[0]}-{ep_range[1]}"
+        ),
         "decks": ", ".join(decks),
         "stakes": ", ".join(stakes),
         "rolling window": window,

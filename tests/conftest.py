@@ -43,6 +43,35 @@ def episodes_only_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _with_eval(run_dir: Path, ante_shift: int = 0) -> None:
+    """Give ``run_dir`` an eval/ folder: run_small's 3 episodes replayed on
+    EVAL_0..2 in two eval rounds (after 0 and 10 training episodes)."""
+    shutil.copytree(RUNS_DIR / "run_small", run_dir)
+    e = pd.read_csv(RUNS_DIR / "run_small" / "episodes.csv")
+    rounds = []
+    for rnd, done in enumerate((0, 10)):
+        r = e.copy()
+        r["episode"] = rnd * len(e) + r.index
+        r["seed"] = [f"EVAL_{i}" for i in range(len(e))]
+        r["ante"] = r["ante"] + rnd + ante_shift
+        r["eval_round"] = rnd
+        r["train_episodes"] = done
+        rounds.append(r)
+    (run_dir / "eval").mkdir()
+    pd.concat(rounds).to_csv(run_dir / "eval" / "episodes.csv", index=False)
+    for name in ("steps.jsonl", "rounds.jsonl", "shops.jsonl"):
+        shutil.copy(RUNS_DIR / "run_small" / name, run_dir / "eval" / name)
+
+
+@pytest.fixture
+def eval_runs_dir(tmp_path: Path) -> Path:
+    """Two runs with eval episodes on the same seeds; run_b is one ante better."""
+    root = tmp_path / "eval_runs"
+    _with_eval(root / "run_a")
+    _with_eval(root / "run_b", ante_shift=1)
+    return root
+
+
 def _atlas(scale: int, cells: dict[tuple[int, int], tuple]) -> bytes:
     w, h = 71 * scale, 95 * scale
     img = Image.new("RGBA", (10 * w, 16 * h), (0, 0, 0, 0))

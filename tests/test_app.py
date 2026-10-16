@@ -298,3 +298,28 @@ def test_app_compares_two_runs(runs_dir, tmp_path):
     at.sidebar.multiselect[0].set_value(["run_copy", "run_small"]).run()
     assert not at.exception
     assert any(s.label == "Compare against baseline" for s in at.selectbox)
+
+
+def test_app_eval_section_and_mode(eval_runs_dir):
+    at = _run(eval_runs_dir)
+    assert not at.exception
+    assert any(r.label == "Eval metric" for r in at.radio)
+    at.sidebar.radio(key="phase").set_value("Evaluation").run()
+    assert not at.exception
+    assert any(s.label == "Eval round" for s in at.sidebar.selectbox)
+    assert any("eval episodes" in i.value for i in at.info)
+
+
+def test_app_no_eval_switch_without_eval(runs_dir):
+    at = _run(runs_dir)
+    assert not [r for r in at.sidebar.radio if r.label == "Episodes"]
+
+
+@pytest.mark.parametrize("tab", TABS)
+def test_every_tab_renders_in_eval_mode(eval_runs_dir, tab):
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["main_tab"] = tab
+    at.session_state["phase"] = "Evaluation"
+    at.run()
+    at.text_input(key="runs_dir").set_value(str(eval_runs_dir)).run()
+    assert not at.exception

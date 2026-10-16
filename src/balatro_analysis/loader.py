@@ -4,6 +4,10 @@ A run is a directory containing ``episodes.csv``, and optionally
 ``config.json``, ``steps.jsonl`` (one row per shop decision), ``rounds.jsonl``
 (one row per blind played, newer runs with the cash-out breakdown) and
 ``shops.jsonl`` (newer runs: what each shop offered).
+
+Runs made with ``--eval-every`` also have an ``eval/`` folder in the same format
+(greedy episodes on fixed seeds, with ``eval_round`` and ``train_episodes``
+columns).  It is loaded as ``Run.eval`` rather than listed as a run of its own.
 """
 
 from __future__ import annotations
@@ -26,6 +30,15 @@ class Run:
     steps: pd.DataFrame | None = None
     rounds: pd.DataFrame | None = None
     shops: pd.DataFrame | None = None
+    eval: Run | None = None  # greedy episodes on the fixed eval seeds, if logged
+
+
+EVAL_DIR = "eval"
+
+
+def is_eval_dir(path: Path) -> bool:
+    """An ``eval/`` folder inside a run (it belongs to that run)."""
+    return path.name == EVAL_DIR and (path.parent / "episodes.csv").is_file()
 
 
 def find_runs(root: str | Path) -> list[Path]:
@@ -33,7 +46,11 @@ def find_runs(root: str | Path) -> list[Path]:
     root = Path(root)
     if not root.is_dir():
         return []
-    return sorted(p.parent for p in root.rglob("episodes.csv"))
+    return sorted(
+        p.parent
+        for p in root.rglob("episodes.csv")
+        if p.parent == root or not is_eval_dir(p.parent)
+    )
 
 
 def _read_jsonl(path: Path) -> pd.DataFrame | None:
@@ -48,13 +65,20 @@ def load_run(path: str | Path, root: str | Path | None = None) -> Run:
     name = str(path.relative_to(root)) if root else path.name
     if name == ".":
         name = path.name
+    config_path = path / "config.json"
+    if not config_path.is_file() and is_eval_dir(path):
+        config_path = path.parent / "config.json"  # loaded on its own: use the run's config
+    config = json.loads(config_path.read_text()) if config_path.is_file() else {}
+    run = _load_tables(path, name, config)
+    if (path / EVAL_DIR / "episodes.csv").is_file():
+        run.eval = _load_tables(path / EVAL_DIR, name, config)
+    return run
 
+
+def _load_tables(path: Path, name: str, config: dict) -> Run:
     episodes = pd.read_csv(path / "episodes.csv")
     if "final_jokers" in episodes:
         episodes["final_jokers"] = episodes["final_jokers"].fillna("").astype(str)
-
-    config_path = path / "config.json"
-    config = json.loads(config_path.read_text()) if config_path.is_file() else {}
 
     # Older runs don't log deck/stake per episode: fill from config if it names
     # exactly one, else mark unknown.

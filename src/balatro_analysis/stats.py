@@ -107,6 +107,36 @@ def summary_ci(runs: list[Run]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def eval_curve(runs: list[Run]) -> pd.DataFrame:
+    """Per run and eval round: training episodes done so far, eval games, mean ante
+    with a bootstrap CI and win rate with a Wilson CI.  ``runs`` are eval runs
+    (episodes with ``eval_round`` / ``train_episodes``); others are skipped."""
+    rows = []
+    for r in runs:
+        e = r.episodes
+        if e.empty or "eval_round" not in e:
+            continue
+        for rnd, g in e.groupby("eval_round"):
+            ante, won = g["ante"].astype(float), g["won"].astype(int)
+            lo, hi = bootstrap_ci(ante)
+            w_lo, w_hi = wilson_ci(int(won.sum()), len(won))
+            rows.append(
+                {
+                    "run": r.name,
+                    "eval_round": int(rnd),
+                    "train_episodes": int(g["train_episodes"].iloc[0]),
+                    "games": len(g),
+                    "mean ante": ante.mean(),
+                    "mean ante low": lo,
+                    "mean ante high": hi,
+                    "win rate": won.mean(),
+                    "win rate low": w_lo,
+                    "win rate high": w_hi,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def mann_whitney(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
     """Two-sided Mann-Whitney U p-value and rank-biserial effect size
     (= Cliff's delta: +1 when every ``a`` beats every ``b``)."""
@@ -129,8 +159,9 @@ def wilcoxon(diffs: np.ndarray) -> float:
 
 def _pair_keys(e: pd.DataFrame) -> list[str]:
     """Columns that pin down the game played: the seed, plus deck and stake when
-    the deck/stake is drawn per episode."""
-    return [c for c in ("seed", "deck", "stake") if c in e]
+    the deck/stake is drawn per episode, plus the eval round for eval episodes
+    (the same eval seeds are replayed every round)."""
+    return [c for c in ("seed", "deck", "stake", "eval_round") if c in e]
 
 
 def paired_ante(run: Run, baseline: Run) -> pd.DataFrame:

@@ -62,6 +62,8 @@ def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[st
         "run_comparison": stats.compare(runs, runs[0].name) if runs else pd.DataFrame(),
         "by_deck": with_names(metrics.by_deck(runs)),
         "learning_curve": metrics.learning_curve(runs, window),
+        # eval runs, or each training run's eval episodes (runs without them are skipped)
+        "eval_curve": stats.eval_curve([r.eval or r for r in runs]),
         "ante_distribution": metrics.ante_distribution(runs),
         "action_frequency": with_names(metrics.action_frequency(runs), {"action": "action"}),
         "action_family_share": actions.family_share(runs),

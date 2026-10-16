@@ -46,6 +46,8 @@ Then, from the jackdaw-balatro folder:
 uv run python scripts/train_random_shop.py --episodes 500 --play smart
 uv run python scripts/train_random_shop.py --episodes 500 --play smart \
     --decks b_red,b_blue,b_black --stakes 1,2 --run-name smart_mixed
+uv run python scripts/train_random_shop.py --episodes 500 --play smart \
+    --eval-every 50 --eval-episodes 20      # + greedy eval on fixed seeds
 uv run python scripts/verify_shop_rl.py
 ```
 
@@ -105,13 +107,23 @@ runs (only `episodes.csv`, no deck column) still load; tabs that need missing da
 moves them back to the ante they were played in.
 † `log_version` 3 runs.
 
+Runs made with `--eval-every` (`log_version` 4) also have an `eval/` folder in the same format:
+greedy episodes on the fixed seeds `EVAL_0..K-1`, played before training and after every N
+training episodes, with `eval_round` and `train_episodes` columns. Every run with the same eval
+settings plays the same eval games. `eval/` is loaded with its run (it isn't listed as a run of
+its own). The sidebar **Episodes** switch (*Training* / *Evaluation*) swaps every tab over to the
+eval episodes, and an **Eval round** picker defaults to the last round, which scores the final
+policy. Paired comparisons then match the runs game by game.
+
 ## Tabs
 
 - **Overview**: summary per run; 95% CIs of mean ante, win rate (Wilson) and return; with
   two or more runs, a comparison against a chosen baseline (difference in mean ante with a
   bootstrap CI, Mann-Whitney U + rank-biserial effect size, Fisher's exact on wins, and a
   Wilcoxon signed-rank test on episodes both runs played on the same seed/deck/stake);
-  rolling learning curve (ante / win rate / return) with a 95% band; ante-reached distribution
+  rolling learning curve (ante / win rate / return) with a 95% band; ante-reached distribution;
+  for runs with eval episodes, eval mean ante / win rate on the fixed seeds against training
+  episodes, with a 95% CI
 - **Decks**: deck cards with episodes and mean ante; mean ante by deck and stake per run
 - **Actions**: KPI strip (decisions per visit, visits leaving at once, visits with a buy, most
   common first action) and sub-tabs:

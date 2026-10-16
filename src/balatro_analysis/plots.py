@@ -31,6 +31,28 @@ def _translucent(colour: str, alpha: float) -> str:
     return colour
 
 
+def _add_bands(fig: go.Figure, df: pd.DataFrame, x: str, metric: str) -> None:
+    """Shade ``<metric> low``..``<metric> high`` under each run's line, in its colour."""
+    bands = []
+    for line in fig.data:
+        g = df[df["run"] == line.legendgroup]
+        bands.append(
+            go.Scatter(
+                x=[*g[x], *g[x][::-1]],
+                y=[*g[f"{metric} high"], *g[f"{metric} low"][::-1]],
+                fill="toself",
+                fillcolor=_translucent(line.line.color, 0.18),
+                line={"width": 0},
+                legendgroup=line.legendgroup,
+                showlegend=False,
+                hoverinfo="skip",
+            )
+        )
+    lines = len(fig.data)
+    fig.add_traces(bands)
+    fig.data = fig.data[lines:] + fig.data[:lines]  # bands under the lines
+
+
 def learning_curve(df: pd.DataFrame, metric: str, names: Names, band: bool = True) -> go.Figure:
     fig = px.line(
         df,
@@ -41,24 +63,23 @@ def learning_curve(df: pd.DataFrame, metric: str, names: Names, band: bool = Tru
         title=f"Rolling {metric}" + (" (95% band)" if band else ""),
     )
     if band and f"{metric} low" in df:
-        bands = []
-        for line in fig.data:
-            g = df[df["run"] == line.legendgroup]
-            bands.append(
-                go.Scatter(
-                    x=[*g["episode"], *g["episode"][::-1]],
-                    y=[*g[f"{metric} high"], *g[f"{metric} low"][::-1]],
-                    fill="toself",
-                    fillcolor=_translucent(line.line.color, 0.18),
-                    line={"width": 0},
-                    legendgroup=line.legendgroup,
-                    showlegend=False,
-                    hoverinfo="skip",
-                )
-            )
-        lines = len(fig.data)
-        fig.add_traces(bands)
-        fig.data = fig.data[lines:] + fig.data[:lines]  # bands under the lines
+        _add_bands(fig, df, "episode", metric)
+    return _fig(fig, hovermode="x unified")
+
+
+def eval_curve(df: pd.DataFrame, metric: str, names: Names) -> go.Figure:
+    """Eval ``metric`` (from ``stats.eval_curve``) against training episodes, 95% CI band."""
+    fig = px.line(
+        df,
+        x="train_episodes",
+        y=metric,
+        color="run",
+        markers=True,
+        hover_data=["eval_round", "games"],
+        labels=_labels(names, "train_episodes", "run", "eval_round", "games"),
+        title=f"Eval {metric} on the fixed seeds (95% CI)",
+    )
+    _add_bands(fig, df, "train_episodes", metric)
     return _fig(fig, hovermode="x unified")
 
 

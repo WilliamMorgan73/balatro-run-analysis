@@ -25,15 +25,20 @@ def filter_episodes(
     end: int,
     decks: list[str] | None = None,
     stakes: list[str] | None = None,
+    eval_rounds: list[int] | None = None,
 ) -> Run:
     """Restrict a run (all its tables) to episodes in ``[start, end]`` that were
-    played on one of ``decks`` / ``stakes`` (None = no filter)."""
+    played on one of ``decks`` / ``stakes`` and, for eval episodes, in one of
+    ``eval_rounds`` (None = no filter).  ``run.eval`` keeps every eval round and
+    gets the deck/stake filter only (the episode range is for training)."""
     e = run.episodes
     keep = (e["episode"] >= start) & (e["episode"] <= end)
     if decks is not None:
         keep &= e["deck"].isin(decks)
     if stakes is not None:
         keep &= e["stake"].isin(stakes)
+    if eval_rounds is not None and "eval_round" in e:
+        keep &= e["eval_round"].isin(eval_rounds)
     episodes = set(e.loc[keep, "episode"])
 
     def cut(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -49,6 +54,7 @@ def filter_episodes(
         steps=cut(run.steps),
         rounds=cut(run.rounds),
         shops=cut(run.shops),
+        eval=filter_episodes(run.eval, 0, np.inf, decks, stakes) if run.eval else None,
     )
 
 
