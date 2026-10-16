@@ -5,6 +5,10 @@
   "pos": {
    "x": 3,
    "y": 3
+  },
+  "order": 9,
+  "config": {
+   "remove_faces": true
   }
  },
  "b_anaglyph": {
@@ -13,7 +17,9 @@
   "pos": {
    "x": 2,
    "y": 4
-  }
+  },
+  "order": 13,
+  "config": {}
  },
  "b_black": {
   "name": "Black Deck",
@@ -21,6 +27,11 @@
   "pos": {
    "x": 3,
    "y": 2
+  },
+  "order": 5,
+  "config": {
+   "hands": -1,
+   "joker_slot": 1
   }
  },
  "b_blue": {
@@ -29,6 +40,10 @@
   "pos": {
    "x": 0,
    "y": 2
+  },
+  "order": 2,
+  "config": {
+   "hands": 1
   }
  },
  "b_challenge": {
@@ -37,7 +52,9 @@
   "pos": {
    "x": 0,
    "y": 4
-  }
+  },
+  "order": 16,
+  "config": {}
  },
  "b_checkered": {
   "name": "Checkered Deck",
@@ -45,7 +62,9 @@
   "pos": {
    "x": 1,
    "y": 3
-  }
+  },
+  "order": 10,
+  "config": {}
  },
  "b_erratic": {
   "name": "Erratic Deck",
@@ -53,6 +72,10 @@
   "pos": {
    "x": 2,
    "y": 3
+  },
+  "order": 15,
+  "config": {
+   "randomize_rank_suit": true
   }
  },
  "b_ghost": {
@@ -61,6 +84,13 @@
   "pos": {
    "x": 6,
    "y": 2
+  },
+  "order": 8,
+  "config": {
+   "consumables": [
+    "c_hex"
+   ],
+   "spectral_rate": 2
   }
  },
  "b_green": {
@@ -69,6 +99,12 @@
   "pos": {
    "x": 2,
    "y": 2
+  },
+  "order": 4,
+  "config": {
+   "extra_discard_bonus": 1,
+   "extra_hand_bonus": 2,
+   "no_interest": true
   }
  },
  "b_magic": {
@@ -77,6 +113,14 @@
   "pos": {
    "x": 0,
    "y": 3
+  },
+  "order": 6,
+  "config": {
+   "consumables": [
+    "c_fool",
+    "c_fool"
+   ],
+   "voucher": "v_crystal_ball"
   }
  },
  "b_nebula": {
@@ -85,6 +129,11 @@
   "pos": {
    "x": 3,
    "y": 0
+  },
+  "order": 7,
+  "config": {
+   "consumable_slot": -1,
+   "voucher": "v_telescope"
   }
  },
  "b_painted": {
@@ -93,6 +142,11 @@
   "pos": {
    "x": 4,
    "y": 3
+  },
+  "order": 12,
+  "config": {
+   "hand_size": 2,
+   "joker_slot": -1
   }
  },
  "b_plasma": {
@@ -101,6 +155,10 @@
   "pos": {
    "x": 4,
    "y": 2
+  },
+  "order": 14,
+  "config": {
+   "ante_scaling": 2
   }
  },
  "b_red": {
@@ -109,6 +167,10 @@
   "pos": {
    "x": 0,
    "y": 0
+  },
+  "order": 1,
+  "config": {
+   "discards": 1
   }
  },
  "b_yellow": {
@@ -117,6 +179,10 @@
   "pos": {
    "x": 1,
    "y": 2
+  },
+  "order": 3,
+  "config": {
+   "dollars": 10
   }
  },
  "b_zodiac": {
@@ -125,6 +191,14 @@
   "pos": {
    "x": 3,
    "y": 4
+  },
+  "order": 11,
+  "config": {
+   "vouchers": [
+    "v_tarot_merchant",
+    "v_planet_merchant",
+    "v_overstock_norm"
+   ]
   }
  },
  "c_ankh": {

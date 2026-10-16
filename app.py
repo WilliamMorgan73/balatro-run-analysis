@@ -26,6 +26,7 @@ RELOAD_ORDER = [
     "plots",
     "sprites",
     "game_text",
+    "details",
     "collection",
     "picker",
     "export",
@@ -57,6 +58,7 @@ from balatro_analysis import (  # noqa: E402
     actions,
     catalog,
     collection,
+    details,
     economy,
     export,
     metrics,
@@ -74,7 +76,6 @@ sys.modules["balatro_analysis"]._app_mtime = package_mtime()  # see reload_if_ch
 DEFAULT_RUNS_DIR = Path(__file__).parent.parent / "jackdaw-balatro" / "runs"
 MIN_VISITS = 5  # money-curve points need at least this many shop visits
 MIN_LEGAL = 20  # preference needs an action to have been legal this often
-ICON_WIDTH = 71  # Balatro's 1x card size; sprites are 2x for sharpness
 
 
 def cli_runs_dir() -> Path:
@@ -189,16 +190,41 @@ def browse_game() -> None:
         st.session_state.game_path = chosen
 
 
-def icon_grid(items: list[tuple[str, str]], per_row: int = 8) -> None:
-    """Show (key, caption) pairs as icons with captions, or captions alone without sprites."""
-    for i in range(0, len(items), per_row):
-        cols = st.columns(per_row)
-        for col, (key, caption) in zip(cols, items[i : i + per_row], strict=False):
-            png = sprites.png(key) if sprites else None
-            with col:
-                if png:
-                    st.image(png, width=ICON_WIDTH)
-                st.caption(caption)
+def icon_uri(key: str | None) -> str | None:
+    return sprites.data_uri(key) if sprites else None
+
+
+def modal_html(markup: str) -> None:
+    """Tiles + click-for-details modals (they need a little script to open)."""
+    st.html(markup, unsafe_allow_javascript=True)
+
+
+def joker_cards() -> list[collection.JokerCard]:
+    """Every joker as a collection card, with stats from the selected runs."""
+    return collection.build_cards(
+        metrics.joker_stats(runs),
+        cached_game_text(str(archive), pkg_mtime) if archive else None,
+        cached_sprites(str(archive), pkg_mtime, 1) if archive else None,
+        metrics.joker_held_by_run(runs),
+    )
+
+
+def joker_grid(items: list[tuple[str, str]], prefix: str) -> None:
+    """(joker key, caption HTML) pairs as clickable tiles that open each joker's modal."""
+    by_key = {c.key: c for c in joker_cards()}
+    shown = [(by_key[k], cap) for k, cap in items if k in by_key]
+    modal_html(
+        collection.mini_grid_html([c for c, _ in shown], names, prefix, [cap for _, cap in shown])
+    )
+
+
+def deck_infos(keys: list[str]) -> list[details.DeckInfo]:
+    deck_table = metrics.by_deck(runs)
+    text = cached_game_text(str(archive), pkg_mtime) if archive else None
+    return [
+        details.deck_info(k, deck_table, text, icon_uri, metrics.deck_top_jokers(runs, k))
+        for k in keys
+    ]
 
 
 st.set_page_config(page_title="Balatro Run Analysis", layout="wide")
@@ -495,21 +521,9 @@ with tabs[1]:
     if tabs[1].open:
         deck_table = metrics.by_deck(runs)
         if need(deck_table, "episodes for this selection"):
-            overall = (
-                deck_table.assign(antes=deck_table["mean_ante"] * deck_table["episodes"])
-                .groupby("deck", as_index=False)[["episodes", "antes"]]
-                .sum()
-            )
-            icon_grid(
-                [
-                    (
-                        d.deck,
-                        f"**{names.deck(d.deck)}**  \n{d.episodes} episodes  \n"
-                        f"mean ante {d.antes / d.episodes:.2f}",
-                    )
-                    for d in overall.itertuples()
-                ]
-            )
+            st.caption("Click a deck for its effect and results.")
+            decks_played = sorted(deck_table["deck"].unique())
+            modal_html(details.deck_grid_html(deck_infos(decks_played), names))
             chart(plots.by_deck(deck_table, names), "mean ante by deck")
             table(
                 deck_table[
@@ -885,15 +899,12 @@ with tabs[3]:
                     skipped = economy.skipped_jokers(runs)
                     st.subheader("Jokers most often affordable but not bought")
                     if need(skipped, "affordable jokers"):
-                        icon_grid(
+                        joker_grid(
                             [
-                                (
-                                    s.key,
-                                    f"**{names.item(s.key)}**  \n"
-                                    f"skipped {s.skipped} of {s.affordable}",
-                                )
+                                (s.key, f"skipped <b>{s.skipped}</b> of {s.affordable}")
                                 for s in skipped.itertuples()
-                            ]
+                            ],
+                            "econ-jk",
                         )
 
 # --- Jokers ---------------------------------------------------------------
@@ -905,11 +916,9 @@ with tabs[4]:
         bought_one = metrics.most_bought([run], top)
         st.subheader(f"Most-bought jokers: {run_name}")
         if need(bought_one, "joker purchases", run.steps is None):
-            icon_grid(
-                [
-                    (b.joker, f"**{names.item(b.joker)}**  \nbought {b.bought}x")
-                    for b in bought_one.itertuples()
-                ]
+            joker_grid(
+                [(b.joker, f"bought <b>{b.bought}&times;</b>") for b in bought_one.itertuples()],
+                "top-jk",
             )
         bought = metrics.most_bought(runs, top)
         if len(runs) > 1 and need(bought, "joker purchases", no_steps):
@@ -940,11 +949,7 @@ with tabs[4]:
 with tabs[5]:
     if tabs[5].open:
         game_text = cached_game_text(str(archive), pkg_mtime) if archive else None
-        cards = collection.build_cards(
-            metrics.joker_stats(runs),
-            game_text,
-            cached_sprites(str(archive), pkg_mtime, 1) if archive else None,
-        )
+        cards = joker_cards()
         c1, c2, c3, c4 = st.columns([3, 3, 2, 2])
         query = c1.text_input("Search", placeholder="name, key or effect text", key="jk_query")
         rarities = c2.multiselect(
@@ -959,16 +964,23 @@ with tabs[5]:
         shown = collection.select(cards, query, rarities, only_used, sort)
         note = "" if game_text else " · art and effect text need the game (see Game assets)"
         st.caption(
-            f"Showing {len(shown)} of {len(cards)} jokers · stats from the selected runs{note}"
+            f"Showing {len(shown)} of {len(cards)} jokers · stats from the selected runs"
+            f" · click a joker for details{note}"
         )
         if shown:
-            st.html(collection.grid_html(shown, names))
+            modal_html(collection.grid_html(shown, names))
         else:
             st.info("No jokers match.")
 
 # --- Rounds ---------------------------------------------------------------
 with tabs[6]:
     if tabs[6].open:
+        st.subheader("Boss blinds")
+        bosses = metrics.boss_stats(runs)
+        if need(bosses, "boss blinds faced", no_rounds):
+            st.caption("Most faced first · click a boss blind for its effect and results.")
+            text = cached_game_text(str(archive), pkg_mtime) if archive else None
+            modal_html(details.blind_grid_html(details.blind_infos(bosses, text, icon_uri), names))
         ratio = metrics.score_ratio(runs)
         if need(ratio, "round data", no_rounds):
             chart(plots.score_ratio(ratio, names), "score vs target")
@@ -994,10 +1006,8 @@ with tabs[7]:
             row = eps.loc[episode]
             deck_col, stats_col = st.columns([1, 6])
             with deck_col:
-                deck_png = sprites.png(row["deck"]) if sprites else None
-                if deck_png:
-                    st.image(deck_png, width=ICON_WIDTH)
-                st.caption(f"**{names.deck(row['deck'])}**  \n{names.stake(row['stake'])}")
+                modal_html(details.deck_grid_html(deck_infos([row["deck"]]), names, "ex-deck"))
+                st.caption(names.stake(row["stake"]))
             with stats_col:
                 cols = st.columns(5)
                 cols[0].metric("Ante reached", int(row["ante"]))
@@ -1009,7 +1019,7 @@ with tabs[7]:
             final = [j for j in str(row.get("final_jokers", "")).split(";") if j]
             st.subheader("Final jokers")
             if final:
-                icon_grid([(j, names.item(j)) for j in final])
+                joker_grid([(j, "") for j in final], "ex-jk")
             else:
                 st.caption("None")
 

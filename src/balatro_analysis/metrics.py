@@ -261,12 +261,20 @@ def final_builds(run: Run) -> list[list[str]]:
     return [[j for j in s.split(";") if j] for s in run.episodes["final_jokers"]]
 
 
-JOKER_STATS_COLUMNS = ["bought", "episodes_bought", "held_at_end", "mean_ante_held", "first_ante"]
+JOKER_STATS_COLUMNS = [
+    "bought",
+    "episodes_bought",
+    "held_at_end",
+    "mean_ante_held",
+    "win_rate_held",
+    "first_ante",
+]
 
 
 def joker_stats(runs: list[Run]) -> pd.DataFrame:
     """Per joker, across ``runs``: times bought, episodes it was bought in, episodes
-    it was held at the end, mean ante reached in those, median ante first bought.
+    it was held at the end, mean ante reached and win rate in those, median ante
+    first bought.
 
     Indexed by joker key; jokers never seen are absent.
     """
@@ -276,11 +284,13 @@ def joker_stats(runs: list[Run]) -> pd.DataFrame:
         if not p.empty:
             bought_rows.append(p[["episode", "ante", "item_key"]].assign(run=r.name))
         if "final_jokers" in r.episodes:
-            for ep, ante, build in zip(
-                r.episodes["episode"], r.episodes["ante"], final_builds(r), strict=True
+            won = r.episodes["won"] if "won" in r.episodes else [0] * len(r.episodes)
+            for ep, ante, win, build in zip(
+                r.episodes["episode"], r.episodes["ante"], won, final_builds(r), strict=True
             ):
                 held_rows += [
-                    {"run": r.name, "episode": ep, "ante": ante, "joker": j} for j in set(build)
+                    {"run": r.name, "episode": ep, "ante": ante, "won": bool(win), "joker": j}
+                    for j in set(build)
                 ]
     parts = []
     if bought_rows:
@@ -296,14 +306,52 @@ def joker_stats(runs: list[Run]) -> pd.DataFrame:
             )
         )
     if held_rows:
-        h = pd.DataFrame(held_rows).groupby("joker")["ante"]
-        parts.append(pd.DataFrame({"held_at_end": h.size(), "mean_ante_held": h.mean()}))
+        h = pd.DataFrame(held_rows).groupby("joker")
+        parts.append(
+            pd.DataFrame(
+                {
+                    "held_at_end": h.size(),
+                    "mean_ante_held": h["ante"].mean(),
+                    "win_rate_held": h["won"].mean(),
+                }
+            )
+        )
     stats = pd.concat(parts, axis=1) if parts else pd.DataFrame()
     stats = stats.reindex(columns=JOKER_STATS_COLUMNS)
     for col in ("bought", "episodes_bought", "held_at_end"):
         stats[col] = stats[col].fillna(0).astype(int)
     stats.index.name = "joker"
     return stats
+
+
+def joker_held_by_run(runs: list[Run]) -> pd.DataFrame:
+    """Per (joker, run): episodes that ended holding the joker, and the run's episodes."""
+    rows = []
+    for r in runs:
+        builds = final_builds(r)
+        counts: dict[str, int] = {}
+        for b in builds:
+            for j in set(b):
+                counts[j] = counts.get(j, 0) + 1
+        rows += [
+            {"joker": j, "run": r.name, "held_at_end": n, "episodes": len(builds)}
+            for j, n in counts.items()
+        ]
+    return pd.DataFrame(rows, columns=["joker", "run", "held_at_end", "episodes"])
+
+
+def deck_top_jokers(runs: list[Run], deck: str, n: int = 3) -> pd.Series:
+    """The ``n`` jokers most often held at the end of episodes played with ``deck``."""
+    counts: dict[str, int] = {}
+    for r in runs:
+        if "deck" not in r.episodes:
+            continue
+        for d, build in zip(r.episodes["deck"], final_builds(r), strict=False):
+            if d == deck:
+                for j in set(build):
+                    counts[j] = counts.get(j, 0) + 1
+    top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
+    return pd.Series(dict(top), dtype=int, name="held_at_end")
 
 
 def joker_cooccurrence(run: Run, top: int = 15) -> pd.DataFrame:
@@ -380,6 +428,41 @@ def deaths(runs: list[Run]) -> pd.DataFrame:
         lost = r.rounds[~r.rounds["beaten"].astype(bool)]
         frames.append(lost[["episode", "ante", "blind_key"]].assign(run=r.name))
     return _concat(frames)
+
+
+BOSS_STATS_COLUMNS = ["faced", "beaten", "losses", "beat_rate", "mean_ratio", "antes"]
+
+
+def boss_stats(runs: list[Run]) -> pd.DataFrame:
+    """Per boss blind across ``runs``: times faced, beaten and lost to, beat rate,
+    mean chips scored / target, and the antes it was met at (sorted, distinct).
+
+    Indexed by blind key, most-faced first.
+    """
+    frames = [
+        r.rounds.assign(run=r.name) for r in runs if r.rounds is not None and not r.rounds.empty
+    ]
+    if not frames:
+        return pd.DataFrame(columns=BOSS_STATS_COLUMNS)
+    d = _concat(frames)
+    d = d[d["blind_key"].map(blind_type) == "Boss"].copy()
+    if d.empty:
+        return pd.DataFrame(columns=BOSS_STATS_COLUMNS)
+    d["beaten"] = d["beaten"].astype(bool)
+    d["ratio"] = d["chips"] / d["target"].where(d["target"] > 0)
+    g = d.groupby("blind_key")
+    out = pd.DataFrame(
+        {
+            "faced": g.size(),
+            "beaten": g["beaten"].sum().astype(int),
+            "mean_ratio": g["ratio"].mean(),
+            "antes": g["ante"].agg(lambda a: sorted({int(x) for x in a})),
+        }
+    )
+    out["losses"] = out["faced"] - out["beaten"]
+    out["beat_rate"] = out["beaten"] / out["faced"]
+    out.index.name = "blind"
+    return out[BOSS_STATS_COLUMNS].sort_values(["faced"], ascending=False, kind="stable")
 
 
 # ---------------------------------------------------------------------------

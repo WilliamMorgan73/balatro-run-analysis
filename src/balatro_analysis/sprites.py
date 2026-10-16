@@ -1,8 +1,10 @@
-"""Joker and deck icons cut from the player's own copy of Balatro.
+"""Joker, deck and blind icons cut from the player's own copy of Balatro.
 
 No game art is stored in this repo. ``Balatro.exe`` (or ``Balatro.love``) is a
 LÖVE zip archive; its sprite atlases live at
-``resources/textures/{1,2}x/{Jokers,Enhancers}.png`` in 71x95 cells (x scale).
+``resources/textures/{1,2}x/{Jokers,Enhancers}.png`` in 71x95 cells (x scale);
+blind chips are in ``BlindChips.png``, 34x34 cells, one animation per row (the
+first frame is used).
 """
 
 from __future__ import annotations
@@ -16,10 +18,11 @@ from pathlib import Path
 
 from PIL import Image
 
-from balatro_analysis.catalog import centers
+from balatro_analysis.catalog import blinds, centers
 
 CELL = (71, 95)
-ATLASES = {"Joker": "Jokers.png", "Back": "Enhancers.png"}
+CELLS = {"Blind": (34, 34)}  # sets whose cells aren't CELL
+ATLASES = {"Joker": "Jokers.png", "Back": "Enhancers.png", "Blind": "BlindChips.png"}
 ARCHIVE_NAMES = ("Balatro.exe", "Balatro.love", "Balatro")
 
 STEAM_ROOTS = (
@@ -93,13 +96,13 @@ class Sprites:
             self._atlases[set_name] = image
         return self._atlases[set_name]
 
-    def _cell(self, atlas: Image.Image, pos: dict) -> Image.Image:
+    def _cell(self, atlas: Image.Image, pos: dict, cell: tuple[int, int] = CELL) -> Image.Image:
         s = atlas.info["scale"]
-        w, h = CELL[0] * s, CELL[1] * s
+        w, h = cell[0] * s, cell[1] * s
         return atlas.crop((pos["x"] * w, pos["y"] * h, (pos["x"] + 1) * w, (pos["y"] + 1) * h))
 
     def png(self, key: str | None) -> bytes | None:
-        """PNG bytes of a joker or deck icon, or None if unknown/unavailable."""
+        """PNG bytes of a joker, deck or blind icon, or None if unknown/unavailable."""
         if not key:
             return None
         if key not in self._icons:
@@ -108,12 +111,14 @@ class Sprites:
 
     def _render(self, key: str) -> bytes | None:
         entry = centers().get(key)
-        if not entry:
+        if not entry and key in blinds() and "pos" in blinds()[key]:
+            entry = {"set": "Blind", "pos": {"x": 0, "y": blinds()[key]["pos"]["y"]}}
+        if not entry or "pos" not in entry:
             return None
         atlas = self._atlas(entry["set"])
         if atlas is None:
             return None
-        icon = self._cell(atlas, entry["pos"])
+        icon = self._cell(atlas, entry["pos"], CELLS.get(entry["set"], CELL))
         if "soul_pos" in entry:  # legendaries / Hologram: floating layer on top
             icon = Image.alpha_composite(icon, self._cell(atlas, entry["soul_pos"]))
         buf = io.BytesIO()
