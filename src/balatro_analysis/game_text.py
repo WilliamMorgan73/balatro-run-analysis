@@ -284,15 +284,30 @@ def parse_loc_vars(card_lua: str) -> dict[str, list[str]]:
     return out
 
 
-def parse_descriptions(loc_lua: str) -> dict[str, dict]:
-    """``{joker key: {"name", "text": [lines]}}`` from localization/en-us.lua."""
+def parse_descriptions(loc_lua: str, prefix: str = "j_") -> dict[str, dict]:
+    """``{key: {"name", "text": [lines]}}`` from localization/en-us.lua for keys starting
+    with ``prefix`` (``j_`` jokers, ``b_`` decks, ``bl_`` blinds)."""
     out = {}
-    entry = re.compile(r"\b(j_\w+)\s*=\s*\{\s*name\s*=\s*\"([^\"]*)\"\s*,\s*text\s*=\s*\{")
+    entry = re.compile(
+        rf"\b({re.escape(prefix)}\w+)\s*=\s*\{{\s*name\s*=\s*\"([^\"]*)\"\s*,\s*text\s*=\s*\{{"
+    )
     for m in entry.finditer(loc_lua):
         if m.group(1) in out:
             continue
         body = _balanced(loc_lua, m.end() - 1)
         out[m.group(1)] = {"name": m.group(2), "text": re.findall(r"\"((?:[^\"\\]|\\.)*)\"", body)}
+    return out
+
+
+_BACK_BRANCH = re.compile(r"name_to_check\s*==\s*'([^']+)'\s*then\s+loc_args\s*=\s*\{")
+
+
+def parse_back_loc_args(back_lua: str) -> dict[str, list[str]]:
+    """``{deck name: [positional loc_args expressions]}`` from back.lua's generate_UI."""
+    out: dict[str, list[str]] = {}
+    for m in _BACK_BRANCH.finditer(back_lua):
+        body = _balanced(back_lua, m.end() - 1)
+        out.setdefault(m.group(1), [p for p in _split_top_level(body) if p])
     return out
 
 
@@ -347,25 +362,54 @@ class JokerText:
     unresolved: int = 0  # placeholders that needed live game state
 
 
+def _unresolved(text: list[str], values: list[Any]) -> int:
+    return sum(
+        1
+        for line in text
+        for n in re.findall(r"#(\d+)#", line)
+        if int(n) > len(values) or values[int(n) - 1] is None
+    )
+
+
+_LOCALIZE_NAME = re.compile(r"localize\s*\{[^{}]*?key\s*=\s*'(\w+)'[^{}]*\}")
+
+
 @dataclass
 class GameText:
-    """Joker names and effect text from one game archive (parsed once)."""
+    """Joker, deck and blind names and effect text from one game archive (parsed once)."""
 
     archive: Path
     descriptions: dict[str, dict] = field(default_factory=dict)
     loc_vars: dict[str, list[str]] = field(default_factory=dict)
     misc: dict[str, dict[str, str]] = field(default_factory=dict)
+    decks: dict[str, dict] = field(default_factory=dict)
+    blinds: dict[str, dict] = field(default_factory=dict)
+    back_args: dict[str, list[str]] = field(default_factory=dict)
+    loc_names: dict[str, str] = field(default_factory=dict)  # any key -> in-game name
 
     @classmethod
     def load(cls, archive: Path) -> GameText:
         with zipfile.ZipFile(archive) as z:
             loc = z.read("localization/en-us.lua").decode("utf-8", "replace")
             card = z.read("card.lua").decode("utf-8", "replace")
+            back = (
+                z.read("back.lua").decode("utf-8", "replace") if "back.lua" in z.namelist() else ""
+            )
         misc = {
             kind: parse_misc_dict(loc, kind)
             for kind in ("suits_singular", "suits_plural", "poker_hands", "ranks")
         }
-        return cls(Path(archive), parse_descriptions(loc), parse_loc_vars(card), misc)
+        loc_names = dict(re.findall(r"\b(\w+)\s*=\s*\{\s*name\s*=\s*\"([^\"]*)\"", loc)[::-1])
+        return cls(
+            Path(archive),
+            parse_descriptions(loc),
+            parse_loc_vars(card),
+            misc,
+            parse_descriptions(loc, "b_"),
+            parse_descriptions(loc, "bl_"),
+            parse_back_loc_args(back),
+            loc_names,
+        )
 
     def _localize(self, key: Any, kind: Any = None) -> Any:
         return self.misc.get(kind, {}).get(key, key)
@@ -383,6 +427,10 @@ class GameText:
             "math": _Obj(floor=math.floor, ceil=math.ceil, max=max, min=min, abs=abs),
             "__len": lambda v: len(v) if v is not None else 0,
         }  # fmt: skip
+        return self._run_all(exprs, names)
+
+    @staticmethod
+    def _run_all(exprs: list[str], names: dict[str, Any]) -> list[Any]:
         out: list[Any] = []
         for expr in exprs:
             try:
@@ -391,16 +439,31 @@ class GameText:
                 out.append(None)
         return out
 
-    def joker(self, key: str) -> JokerText | None:
-        desc = self.descriptions.get(key)
+    def _text(self, desc: dict | None, values: list[Any]) -> JokerText | None:
         if not desc:
             return None
-        values = self.values(key)
         lines = [format_line(line, values) for line in desc["text"] if line.strip()]
-        unresolved = sum(
-            1
-            for line in desc["text"]
-            for n in re.findall(r"#(\d+)#", line)
-            if int(n) > len(values) or values[int(n) - 1] is None
-        )
-        return JokerText(desc["name"], lines, unresolved)
+        return JokerText(desc["name"], lines, _unresolved(desc["text"], values))
+
+    def joker(self, key: str) -> JokerText | None:
+        desc = self.descriptions.get(key)
+        return self._text(desc, self.values(key)) if desc else None
+
+    def deck_values(self, key: str) -> list[Any]:
+        """A deck's ``loc_args`` (back.lua), evaluated against its starting config."""
+        entry = catalog.centers().get(key, {})
+        exprs = [
+            # localize{type = 'name_text', key = 'v_telescope', ...} -> that item's name
+            _LOCALIZE_NAME.sub(
+                lambda m: repr(self.loc_names.get(m.group(1), catalog.name(m.group(1)))), expr
+            )
+            for expr in self.back_args.get(entry.get("name", ""), [])
+        ]
+        return self._run_all(exprs, {"effect_config": _wrap(entry.get("config") or {})})
+
+    def deck(self, key: str) -> JokerText | None:
+        return self._text(self.decks.get(key), self.deck_values(key))
+
+    def blind(self, key: str) -> JokerText | None:
+        """A blind's text; values that depend on the run (e.g. The Ox's hand) are unknown."""
+        return self._text(self.blinds.get(key), [])

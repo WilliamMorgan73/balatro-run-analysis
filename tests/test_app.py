@@ -1,3 +1,5 @@
+import json
+import re
 import shutil
 from pathlib import Path
 
@@ -84,11 +86,43 @@ def test_only_open_tab_renders(runs_dir):
     assert len(overview.get("plotly_chart")) < len(economy.get("plotly_chart"))
 
 
+def _html(at: AppTest) -> str:
+    return "".join(h.proto.body for h in at.get("html"))
+
+
 def test_app_icons_with_game(runs_dir, fake_game):
-    decks = _run(runs_dir, fake_game, tab="Decks")
-    assert len(decks.get("image")) == 2  # one card per deck
-    explorer = _run(runs_dir, fake_game, tab="Episode explorer")
-    assert len(explorer.get("image")) >= 2  # deck + final jokers
+    decks = _html(_run(runs_dir, fake_game, tab="Decks"))
+    assert decks.count('<dialog class="dt-dialog"') == 2  # one modal per deck
+    assert decks.count("data:image/png;base64,") >= 2  # deck art
+    assert "+1 discard" in re.sub(r"<[^>]+>", "", decks)  # Red Deck's effect text from the game
+    explorer = _html(_run(runs_dir, fake_game, tab="Episode explorer"))
+    assert 'id="ex-deck-b_red"' in explorer  # episode 0's deck
+    assert explorer.count('data-dialog="ex-jk-') == 2  # its two final jokers
+
+
+def test_app_modals_need_javascript(runs_dir):
+    at = _run(runs_dir, tab="Decks")
+    html = next(h for h in at.get("html") if "dt-dialog" in h.proto.body)
+    assert html.proto.unsafe_allow_javascript
+
+
+def test_app_jokers_tab_tiles_open_modals(runs_dir):
+    html = _html(_run(runs_dir, tab="Jokers"))
+    assert 'data-dialog="top-jk-0-j_joker"' in html
+    assert "bought <b>2&times;</b>" in html
+
+
+def test_app_boss_blind_grid(copied_runs, fake_game):
+    rounds = copied_runs / "run_small" / "rounds.jsonl"
+    hook = {"episode": 0, "ante": 1, "round": 3, "blind_key": "bl_hook", "target": 600,
+            "chips": 900, "beaten": True}  # fmt: skip
+    rounds.write_text(rounds.read_text() + json.dumps(hook) + "\n")
+    at = _run(copied_runs, fake_game, tab="Rounds")
+    assert not at.exception
+    html = _html(at)
+    assert 'id="boss-bl_hook"' in html and "Discards 2 random" in html
+    no_boss = _run(copied_runs.parent / "missing", tab="Rounds")
+    assert not no_boss.exception
 
 
 def test_app_deck_filter(runs_dir):

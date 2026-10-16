@@ -3,7 +3,8 @@
 Cards are plain data (``JokerCard``) so filtering/sorting is testable; ``grid_html``
 renders them. Art and effect text come from the player's game install when
 available (``sprites`` / ``game_text``); otherwise cards fall back to the name,
-rarity, cost and effect category from the catalog.
+rarity, cost and effect category from the catalog. Clicking a card opens a
+modal with its details (see ``details``).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from balatro_analysis import catalog
+from balatro_analysis import catalog, details
 from balatro_analysis.game_text import RARITY, GameText
 from balatro_analysis.names import Names
 from balatro_analysis.sprites import Sprites
@@ -45,7 +46,9 @@ class JokerCard:
     episodes_bought: int = 0
     held_at_end: int = 0
     mean_ante_held: float | None = None
+    win_rate_held: float | None = None
     first_ante: float | None = None
+    held_by_run: list[tuple[str, int, int]] = field(default_factory=list)  # run, held, episodes
 
     @property
     def rarity_name(self) -> str:
@@ -61,8 +64,18 @@ def _num(v) -> float | None:
 
 
 def build_cards(
-    stats: pd.DataFrame, text: GameText | None = None, sprites: Sprites | None = None
+    stats: pd.DataFrame,
+    text: GameText | None = None,
+    sprites: Sprites | None = None,
+    held_by_run: pd.DataFrame | None = None,
 ) -> list[JokerCard]:
+    """``held_by_run`` is ``metrics.joker_held_by_run`` (for the per-run lines in the modal)."""
+    per_run: dict[str, list[tuple[str, int, int]]] = {}
+    if held_by_run is not None:
+        for row in held_by_run.itertuples(index=False):
+            per_run.setdefault(row.joker, []).append(
+                (row.run, int(row.held_at_end), int(row.episodes))
+            )
     cards = []
     for key, entry in catalog.centers().items():
         if entry["set"] != "Joker":
@@ -83,7 +96,9 @@ def build_cards(
                 episodes_bought=int(s["episodes_bought"]) if s is not None else 0,
                 held_at_end=int(s["held_at_end"]) if s is not None else 0,
                 mean_ante_held=_num(s["mean_ante_held"]) if s is not None else None,
+                win_rate_held=_num(s["win_rate_held"]) if s is not None else None,
                 first_ante=_num(s["first_ante"]) if s is not None else None,
+                held_by_run=per_run.get(key, []),
             )
         )
     return sorted(cards, key=lambda c: c.order)
@@ -113,7 +128,7 @@ CSS = """
 <style>
 .jk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px}
 .jk-card{background:#3a4c56;border:2px solid #24323a;border-radius:12px;padding:10px;
-  display:flex;flex-direction:column;align-items:center;gap:6px;color:#fff;
+  height:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;gap:6px;color:#fff;
   font-family:system-ui,sans-serif;box-shadow:0 3px 0 #1d282e}
 .jk-art{width:142px;height:190px;image-rendering:pixelated;border-radius:6px}
 .jk-noart{width:142px;height:190px;border-radius:6px;background:#708b91;display:flex;
@@ -173,5 +188,69 @@ def card_html(c: JokerCard, names: Names) -> str:
     )
 
 
-def grid_html(cards: list[JokerCard], names: Names) -> str:
-    return CSS + '<div class="jk-grid">' + "".join(card_html(c, names) for c in cards) + "</div>"
+def _tags_html(c: JokerCard) -> str:
+    rarity, colour = RARITY.get(c.rarity, ("?", "#708b91"))
+    return (
+        f'<span class="dt-tag" style="background:{colour}">{rarity}</span>'
+        f'<span class="dt-money">${c.cost}</span>'
+    )
+
+
+def joker_dialog(c: JokerCard, names: Names, did: str) -> str:
+    """The modal for one joker: art, effect text and how it did in the selected runs."""
+    title = names.item(c.key)
+    body = details.desc_html(c.lines, c.effect or "No effect text")
+    if c.bought or c.held_at_end:
+        pairs = [
+            ("Times bought", f"{c.bought} (in {c.episodes_bought} episodes)"),
+            ("Median ante first bought", details.num(c.first_ante, "{:g}")),
+            ("Episodes ending with it", str(c.held_at_end)),
+            ("Mean ante when held at end", details.num(c.mean_ante_held)),
+            ("Win rate when held at end", details.pct(c.win_rate_held)),
+        ]
+        body += details.section("In the selected runs") + details.stats_html(pairs)
+        if len(c.held_by_run) > 1:
+            per = pd.DataFrame(
+                [
+                    {"Run": run, "Held at end": held, "Of episodes": eps,
+                     "Share": details.pct(held / eps if eps else None)}
+                    for run, held, eps in c.held_by_run
+                ]
+            )  # fmt: skip
+            body += details.section("Held at the end, by run") + details.table_html(per)
+    else:
+        body += '<div class="dt-empty">Not bought or held in the selected runs.</div>'
+    sub = c.key if names.pretty else c.name
+    art = details.art_html(c.icon, c.name, 142, 190)
+    return details.dialog_html(did, title, sub, art, body, _tags_html(c))
+
+
+def grid_html(cards: list[JokerCard], names: Names, prefix: str = "jk") -> str:
+    """The collection grid; each card opens its modal."""
+    ids = [details.dialog_id(prefix, c.key) for c in cards]
+    return CSS + details.page(
+        [
+            details.tile_html(i, card_html(c, names), names.item(c.key))
+            for c, i in zip(cards, ids, strict=True)
+        ],
+        [joker_dialog(c, names, i) for c, i in zip(cards, ids, strict=True)],
+        grid_class="jk-grid",
+    )
+
+
+def mini_grid_html(
+    cards: list[JokerCard], names: Names, prefix: str, captions: list[str] | None = None
+) -> str:
+    """Compact joker tiles (art, name, optional caption HTML) that open the same modal."""
+    ids = [details.dialog_id(prefix, f"{n}-{c.key}") for n, c in enumerate(cards)]
+    captions = captions or [""] * len(cards)
+    tiles = []
+    for c, i, cap in zip(cards, ids, captions, strict=True):
+        title = names.item(c.key)
+        sub = f'<div class="dt-sub">{cap}</div>' if cap else ""
+        inner = (
+            f'<div class="dt-mini">{details.art_html(c.icon, c.name, 71, 95)}'
+            f'<div class="dt-name">{html.escape(title)}</div>{sub}</div>'
+        )
+        tiles.append(details.tile_html(i, inner, title))
+    return details.page(tiles, [joker_dialog(c, names, i) for c, i in zip(cards, ids, strict=True)])

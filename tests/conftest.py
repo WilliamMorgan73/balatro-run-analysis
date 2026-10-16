@@ -16,6 +16,7 @@ RUNS_DIR = Path(__file__).parent / "fixtures" / "runs"
 JOKER_COLOUR = (255, 0, 0, 255)  # j_joker at pos (0, 0)
 SOUL_COLOUR = (0, 0, 255, 255)  # j_caino soul layer at (3, 9)
 DECK_COLOUR = (0, 255, 0, 255)  # b_black at pos (3, 2)
+BLIND_COLOUR = (255, 255, 0, 255)  # bl_hook chip at (0, 7)
 
 
 @pytest.fixture(autouse=True)
@@ -89,8 +90,10 @@ def group_runs_dir(tmp_path: Path) -> Path:
     return root
 
 
-def _atlas(scale: int, cells: dict[tuple[int, int], tuple]) -> bytes:
-    w, h = 71 * scale, 95 * scale
+def _atlas(
+    scale: int, cells: dict[tuple[int, int], tuple], cell: tuple[int, int] = (71, 95)
+) -> bytes:
+    w, h = cell[0] * scale, cell[1] * scale
     img = Image.new("RGBA", (10 * w, 16 * h), (0, 0, 0, 0))
     for (x, y), colour in cells.items():
         img.paste(Image.new("RGBA", (w, h), colour), (x * w, y * h))
@@ -111,8 +114,12 @@ def fake_game(tmp_path: Path) -> Path:
         )
         z.writestr("resources/textures/2x/Enhancers.png", _atlas(2, {(3, 2): DECK_COLOUR}))
         z.writestr("resources/textures/1x/Jokers.png", _atlas(1, {(0, 0): JOKER_COLOUR}))
+        z.writestr(
+            "resources/textures/2x/BlindChips.png", _atlas(2, {(0, 7): BLIND_COLOUR}, (34, 34))
+        )
         z.writestr("localization/en-us.lua", FAKE_LOCALIZATION)
         z.writestr("card.lua", FAKE_CARD_LUA)
+        z.writestr("back.lua", FAKE_BACK_LUA)
     return game
 
 
@@ -155,6 +162,55 @@ return {
             },
         },
     },
+        Back={
+            b_red={
+                name="Red Deck",
+                text={
+                    "{C:red}+#1#{} discard",
+                    "every round",
+                },
+            },
+            b_black={
+                name="Black Deck",
+                text={
+                    "{C:attention}+#1#{} Joker slot",
+                    "",
+                    "{C:blue}-#2#{} hand",
+                },
+            },
+            b_nebula={
+                name="Nebula Deck",
+                text={
+                    "Start run with the",
+                    "{C:planet,T:v_telescope}#1#{} voucher",
+                },
+            },
+        },
+        Blind={
+            bl_hook={
+                name="The Hook",
+                text={
+                    "Discards 2 random",
+                    "cards per hand played",
+                },
+            },
+            bl_ox={
+                name="The Ox",
+                text={
+                    "Playing a {C:attention}#1#{}",
+                    "sets money to $0",
+                },
+            },
+        },
+        Voucher={
+            v_telescope={
+                name="Telescope",
+                text={
+                    "Celestial packs",
+                },
+            },
+        },
+    },
     misc={
         suits_singular={
             Clubs="Club",
@@ -171,6 +227,16 @@ function Card:generate_UIBox_ability_table()
             loc_vars = {self.ability.extra.s_mult, localize(self.ability.extra.suit, 'suits_singular')}
         elseif self.ability.name == 'Cavendish' then loc_vars = {self.ability.extra.Xmult, ''..(G.GAME and G.GAME.probabilities.normal or 1), self.ability.extra.odds}
         elseif self.ability.name == 'Castle' then loc_vars = {self.ability.extra.chip_mod, localize(G.GAME.current_round.castle_card.suit, 'suits_singular'), colours = {G.C.SUITS.Spades}}
+        end
+end
+"""
+
+FAKE_BACK_LUA = """
+function Back:generate_UI(other, ui_scale, min_dims, challenge)
+        if name_to_check == 'Blue Deck' then loc_args = {effect_config.hands}
+        elseif name_to_check == 'Red Deck' then loc_args = {effect_config.discards}
+        elseif name_to_check == 'Black Deck' then loc_args = {effect_config.joker_slot, -effect_config.hands}
+        elseif name_to_check == 'Nebula Deck' then loc_args = {localize{type = 'name_text', key = 'v_telescope', set = 'Voucher'}, -1}
         end
 end
 """

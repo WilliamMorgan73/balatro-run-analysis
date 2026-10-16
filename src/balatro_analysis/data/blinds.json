@@ -1,122 +1,416 @@
 {
  "bl_arm": {
   "name": "The Arm",
-  "boss": true
+  "boss": true,
+  "order": 8,
+  "pos": {
+   "x": 0,
+   "y": 11
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#6865f3"
  },
  "bl_big": {
   "name": "Big Blind",
-  "boss": false
+  "boss": false,
+  "order": 2,
+  "pos": {
+   "x": 0,
+   "y": 1
+  },
+  "dollars": 4,
+  "mult": 1.5
  },
  "bl_club": {
   "name": "The Club",
-  "boss": true
+  "boss": true,
+  "order": 9,
+  "pos": {
+   "x": 0,
+   "y": 4
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 1,
+  "showdown": false,
+  "colour": "#b9cb92"
  },
  "bl_eye": {
   "name": "The Eye",
-  "boss": true
+  "boss": true,
+  "order": 16,
+  "pos": {
+   "x": 0,
+   "y": 17
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 3,
+  "showdown": false,
+  "colour": "#4b71e4"
  },
  "bl_final_acorn": {
   "name": "Amber Acorn",
-  "boss": true
+  "boss": true,
+  "order": 26,
+  "pos": {
+   "x": 0,
+   "y": 27
+  },
+  "dollars": 8,
+  "mult": 2,
+  "min_ante": 10,
+  "showdown": true,
+  "colour": "#fda200"
  },
  "bl_final_bell": {
   "name": "Cerulean Bell",
-  "boss": true
+  "boss": true,
+  "order": 30,
+  "pos": {
+   "x": 0,
+   "y": 26
+  },
+  "dollars": 8,
+  "mult": 2,
+  "min_ante": 10,
+  "showdown": true,
+  "colour": "#009cfd"
  },
  "bl_final_heart": {
   "name": "Crimson Heart",
-  "boss": true
+  "boss": true,
+  "order": 29,
+  "pos": {
+   "x": 0,
+   "y": 25
+  },
+  "dollars": 8,
+  "mult": 2,
+  "min_ante": 10,
+  "showdown": true,
+  "colour": "#ac3232"
  },
  "bl_final_leaf": {
   "name": "Verdant Leaf",
-  "boss": true
+  "boss": true,
+  "order": 27,
+  "pos": {
+   "x": 0,
+   "y": 28
+  },
+  "dollars": 8,
+  "mult": 2,
+  "min_ante": 10,
+  "showdown": true,
+  "colour": "#56a786"
  },
  "bl_final_vessel": {
   "name": "Violet Vessel",
-  "boss": true
+  "boss": true,
+  "order": 28,
+  "pos": {
+   "x": 0,
+   "y": 29
+  },
+  "dollars": 8,
+  "mult": 6,
+  "min_ante": 10,
+  "showdown": true,
+  "colour": "#8a71e1"
  },
  "bl_fish": {
   "name": "The Fish",
-  "boss": true
+  "boss": true,
+  "order": 10,
+  "pos": {
+   "x": 0,
+   "y": 5
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#3e85bd"
  },
  "bl_flint": {
   "name": "The Flint",
-  "boss": true
+  "boss": true,
+  "order": 24,
+  "pos": {
+   "x": 0,
+   "y": 24
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#e56a2f"
  },
  "bl_goad": {
   "name": "The Goad",
-  "boss": true
+  "boss": true,
+  "order": 12,
+  "pos": {
+   "x": 0,
+   "y": 13
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 1,
+  "showdown": false,
+  "colour": "#b95c96"
  },
  "bl_head": {
   "name": "The Head",
-  "boss": true
+  "boss": true,
+  "order": 22,
+  "pos": {
+   "x": 0,
+   "y": 21
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 1,
+  "showdown": false,
+  "colour": "#ac9db4"
  },
  "bl_hook": {
   "name": "The Hook",
-  "boss": true
+  "boss": true,
+  "order": 3,
+  "pos": {
+   "x": 0,
+   "y": 7
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 1,
+  "showdown": false,
+  "colour": "#a84024"
  },
  "bl_house": {
   "name": "The House",
-  "boss": true
+  "boss": true,
+  "order": 5,
+  "pos": {
+   "x": 0,
+   "y": 3
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#5186a8"
  },
  "bl_manacle": {
   "name": "The Manacle",
-  "boss": true
+  "boss": true,
+  "order": 15,
+  "pos": {
+   "x": 0,
+   "y": 8
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 1,
+  "showdown": false,
+  "colour": "#575757"
  },
  "bl_mark": {
   "name": "The Mark",
-  "boss": true
+  "boss": true,
+  "order": 25,
+  "pos": {
+   "x": 0,
+   "y": 23
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#6a3847"
  },
  "bl_mouth": {
   "name": "The Mouth",
-  "boss": true
+  "boss": true,
+  "order": 17,
+  "pos": {
+   "x": 0,
+   "y": 18
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#ae718e"
  },
  "bl_needle": {
   "name": "The Needle",
-  "boss": true
+  "boss": true,
+  "order": 21,
+  "pos": {
+   "x": 0,
+   "y": 20
+  },
+  "dollars": 5,
+  "mult": 1,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#5c6e31"
  },
  "bl_ox": {
   "name": "The Ox",
-  "boss": true
+  "boss": true,
+  "order": 4,
+  "pos": {
+   "x": 0,
+   "y": 2
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 6,
+  "showdown": false,
+  "colour": "#b95b08"
  },
  "bl_pillar": {
   "name": "The Pillar",
-  "boss": true
+  "boss": true,
+  "order": 20,
+  "pos": {
+   "x": 0,
+   "y": 16
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 1,
+  "showdown": false,
+  "colour": "#7e6752"
  },
  "bl_plant": {
   "name": "The Plant",
-  "boss": true
+  "boss": true,
+  "order": 18,
+  "pos": {
+   "x": 0,
+   "y": 19
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 4,
+  "showdown": false,
+  "colour": "#709284"
  },
  "bl_psychic": {
   "name": "The Psychic",
-  "boss": true
+  "boss": true,
+  "order": 11,
+  "pos": {
+   "x": 0,
+   "y": 12
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 1,
+  "showdown": false,
+  "colour": "#efc03c"
  },
  "bl_serpent": {
   "name": "The Serpent",
-  "boss": true
+  "boss": true,
+  "order": 19,
+  "pos": {
+   "x": 0,
+   "y": 15
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 5,
+  "showdown": false,
+  "colour": "#439a4f"
  },
  "bl_small": {
   "name": "Small Blind",
-  "boss": false
+  "boss": false,
+  "order": 1,
+  "pos": {
+   "x": 0,
+   "y": 0
+  },
+  "dollars": 3,
+  "mult": 1
  },
  "bl_tooth": {
   "name": "The Tooth",
-  "boss": true
+  "boss": true,
+  "order": 23,
+  "pos": {
+   "x": 0,
+   "y": 22
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 3,
+  "showdown": false,
+  "colour": "#b52d2d"
  },
  "bl_wall": {
   "name": "The Wall",
-  "boss": true
+  "boss": true,
+  "order": 6,
+  "pos": {
+   "x": 0,
+   "y": 9
+  },
+  "dollars": 5,
+  "mult": 4,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#8a59a5"
  },
  "bl_water": {
   "name": "The Water",
-  "boss": true
+  "boss": true,
+  "order": 13,
+  "pos": {
+   "x": 0,
+   "y": 14
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#c6e0eb"
  },
  "bl_wheel": {
   "name": "The Wheel",
-  "boss": true
+  "boss": true,
+  "order": 7,
+  "pos": {
+   "x": 0,
+   "y": 10
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 2,
+  "showdown": false,
+  "colour": "#50bf7c"
  },
  "bl_window": {
   "name": "The Window",
-  "boss": true
+  "boss": true,
+  "order": 14,
+  "pos": {
+   "x": 0,
+   "y": 6
+  },
+  "dollars": 5,
+  "mult": 2,
+  "min_ante": 1,
+  "showdown": false,
+  "colour": "#a9a295"
  }
 }

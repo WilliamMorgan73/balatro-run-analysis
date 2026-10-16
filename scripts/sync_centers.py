@@ -2,7 +2,8 @@
 
 Keeps only what the dashboard needs: display name and set for every center
 (jokers, decks, packs, vouchers, consumables, enhancements, ...), sprite
-positions for jokers and decks, and blind names (no game art).
+positions for jokers and decks, deck configs, and blind names, chip positions,
+colours and rewards (no game art).
 
     uv run python scripts/sync_centers.py [path/to/jackdaw/engine/data]
 """
@@ -39,12 +40,22 @@ def main() -> None:
                 config=c.get("config") or {},
                 effect=c.get("effect") or "",
             )
+        if c["set"] == "Back":
+            # Fills the deck text's #n# values (back.lua's loc_args)
+            entry.update(order=c.get("order"), config=c.get("config") or {})
         centers[key] = entry
 
-    blinds = {
-        key: {"name": b["name"], "boss": "boss" in b}
-        for key, b in sorted(json.loads((src / "blinds.json").read_text()).items())
-    }
+    blinds = {}
+    for key, b in sorted(json.loads((src / "blinds.json").read_text()).items()):
+        entry = {"name": b["name"], "boss": "boss" in b, "order": b.get("order"),
+                 "pos": b["pos"], "dollars": b.get("dollars"), "mult": b.get("mult")}  # fmt: skip
+        if "boss" in b:
+            entry["min_ante"] = b["boss"].get("min")
+            entry["showdown"] = bool(b["boss"].get("showdown"))
+        if b.get("boss_colour"):
+            r, g, bl = (round(v * 255) for v in b["boss_colour"][:3])
+            entry["colour"] = f"#{r:02x}{g:02x}{bl:02x}"
+        blinds[key] = entry
 
     for name, data in (("centers", centers), ("blinds", blinds)):
         path = OUT / f"{name}.json"
