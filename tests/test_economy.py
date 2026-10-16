@@ -134,3 +134,33 @@ def test_pack_income(run):
     assert inc.loc["Pack contents", "per_episode"] == pytest.approx(6 / 3)
     v = economy.shop_visits([run])
     assert v["other_income"].sum() >= 6
+
+
+def test_interest_cap_per_visit(copied_runs):
+    """Seed Money / Money Tree raise the cap mid-run: each visit uses the cap at the
+    next cash-out (the next blind's row), falling back to its own round's row."""
+    import json
+
+    path = copied_runs / "run_small" / "rounds.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    for r in rows:
+        if (r["episode"], r["round"]) == (0, 2):
+            r["interest_cap"] = 50  # Seed Money bought in the round-1 shop
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    v = economy.shop_visits([load_run(copied_runs / "run_small")]).set_index(["episode", "round"])
+    assert v.loc[(0, 1), "interest_cap"] == 50
+    assert v.loc[(0, 3), "interest_cap"] == 25  # next row (round 4) still 25
+    assert v.loc[(1, 1), "interest_cap"] == 25
+
+
+def test_rent_is_not_cash_out(copied_runs):
+    import json
+
+    path = copied_runs / "run_small" / "rounds.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0]["earn_rent"] = 3
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    inc = economy.income_by_source([load_run(copied_runs / "run_small")]).set_index("source")
+    assert inc.loc["Rent", "kind"] == "end of round"
+    assert inc.loc["Rent", "per_episode"] == pytest.approx(-1)
+    assert inc.loc["Blind reward", "kind"] == "cash-out"
