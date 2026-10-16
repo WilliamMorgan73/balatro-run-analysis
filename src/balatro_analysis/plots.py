@@ -762,21 +762,35 @@ def availability(df: pd.DataFrame, names: Names) -> go.Figure:
 
 
 def preference(df: pd.DataFrame, names: Names) -> go.Figure:
+    rows = _availability_rows(df, names)
+    if "preference_low" in rows:
+        rows = rows.assign(
+            err_plus=rows["preference_high"] - rows["preference"],
+            err_minus=rows["preference"] - rows["preference_low"],
+        )
+    has_ci = "err_plus" in rows
     fig = px.bar(
-        _availability_rows(df, names),
+        rows,
         x="action",
         y="preference",
         color="run",
         barmode="group",
-        hover_data=["chosen_when_legal", "uniform_expected", "legal_count"],
+        error_y="err_plus" if has_ci else None,
+        error_y_minus="err_minus" if has_ci else None,
+        hover_data=[
+            c
+            for c in ("chosen_when_legal", "uniform_expected", "legal_count", "q_value")
+            if c in rows
+        ],
         labels=_labels(names, "action", "run")
         | {
             "preference": "chosen ÷ uniform-random rate",
             "chosen_when_legal": "chosen when legal",
             "uniform_expected": "uniform-random rate",
             "legal_count": "decisions legal",
+            "q_value": "q (vs uniform)",
         },
-        title="Preference vs a uniform-random agent (1 = random, above = favoured)",
+        title="Preference vs a uniform-random agent (1 = random, above = favoured; 95% CI)",
     )
     fig.add_hline(y=1, line_dash="dash", line_color="grey", annotation_text="uniform random")
     return _fig(fig)

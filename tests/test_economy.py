@@ -111,3 +111,26 @@ def test_v1_boss_ante_corrected(tmp_path):
     assert load_run(d).rounds["ante"].tolist() == [1, 2]
     (d / "config.json").write_text('{"log_version": 2}')
     assert load_run(d).rounds["ante"].tolist() == [2, 2]
+
+
+def test_tag_income(run):
+    """log_version 5 logs money paid by tags at cash-out; older logs have no column."""
+    assert "Tags" not in set(economy.income_by_source([run])["source"])
+    run.rounds["earn_tags"] = [25 if i == 1 else 0 for i in range(len(run.rounds))]
+    run.rounds.loc[run.rounds["earn_total"].isna(), "earn_tags"] = None
+    inc = economy.income_by_source([run]).set_index("source")
+    assert inc.loc["Tags", "per_episode"] == pytest.approx(25 / 3)
+    assert "Tags" in set(economy.income_breakdown([run])["component"])
+
+
+def test_pack_income(run):
+    """log_version 5 logs money once a bought pack closes; gains count as income."""
+    assert "Pack contents" not in set(economy.income_by_source([run])["source"])
+    s = run.steps
+    s["dollars_after_pack"] = None
+    first = s.index[0]
+    s.loc[first, "dollars_after_pack"] = s.loc[first, "dollars_after"] + 6
+    inc = economy.income_by_source([run]).set_index("source")
+    assert inc.loc["Pack contents", "per_episode"] == pytest.approx(6 / 3)
+    v = economy.shop_visits([run])
+    assert v["other_income"].sum() >= 6

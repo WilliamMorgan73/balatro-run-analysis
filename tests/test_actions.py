@@ -5,10 +5,11 @@ ep1 r1 (buy_card_0, sell_joker_0, buy_card_0, skip).  Legal sets per step, in
 order: [0,1,2,16] [5,15,16] [0,1,5,15,16] [5,6,16] [0,16] [0,5,16] [0,16] [5,16].
 """
 
+import pandas as pd
 import pytest
 
 from balatro_analysis import actions
-from balatro_analysis.loader import load_run
+from balatro_analysis.loader import Run, load_run
 
 
 def test_family():
@@ -98,8 +99,21 @@ def test_availability(run):
     assert a.loc["reroll", "preference"] == 0  # legal twice, never chosen
     assert a.loc["buy_voucher", "legal_count"] == 0
     assert a["preference"].isna()["buy_voucher"]
-    counts = actions.legal_counts([run]).set_index("n_legal")["count"]
-    assert counts.to_dict() == {2: 3, 3: 3, 4: 1, 5: 1}
+    assert buy["preference_low"] < buy["preference"] < buy["preference_high"]
+    assert 0 <= buy["p_value"] <= 1 and buy["q_value"] >= buy["p_value"]
+
+
+def test_preference_test_against_uniform(run):
+    """An agent that always picks action 0 out of 2 legal ones clearly prefers it."""
+    n = 200
+    steps = pd.DataFrame(
+        {"episode": 0, "step": range(n), "action": 0, "legal": [[0, 16]] * n}
+    ).assign(action_name="buy_card_0")
+    always = Run("always_buy", None, pd.DataFrame({"episode": [0]}), run.config, steps=steps)
+    a = actions.availability([always]).set_index("action")
+    assert a.loc["buy_card_0", "preference"] == pytest.approx(2)
+    assert a.loc["buy_card_0", "q_value"] < 1e-6
+    assert a.loc["skip", "preference"] == 0 and a.loc["skip", "significant"]
 
 
 def test_old_logs_have_no_availability(copied_runs):

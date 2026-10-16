@@ -41,6 +41,7 @@ COLUMNS = {
     "blind_on_deck": "Next blind",
     "dollars_before": "$ before",
     "dollars_after": "$ after",
+    "dollars_after_pack": "$ after pack",
     "action": "Action",
     "action_name": "Action",
     "item_key": "Item",

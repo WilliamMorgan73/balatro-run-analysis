@@ -38,6 +38,7 @@ EARNINGS = {
     "earn_discards": "Unused discards",
     "earn_jokers": "Jokers",
     "earn_rent": "Rent",
+    "earn_tags": "Tags",  # log_version 5: money tags pay at cash-out (Investment)
 }
 
 
@@ -76,7 +77,9 @@ def category(action_name: str, item_key) -> str | None:
 
 
 def steps_with_money(run: Run) -> pd.DataFrame:
-    """Shop steps with ``category``, ``spent`` and ``income`` (both >= 0)."""
+    """Shop steps with ``category``, ``spent`` and ``income`` (both >= 0), and
+    ``pack_income``: money gained while a pack bought by this step was open
+    (e.g. The Hermit; log_version 5, else 0)."""
     if run.steps is None or run.steps.empty:
         return pd.DataFrame()
     s = run.steps.sort_values(["episode", "step"]).copy()
@@ -84,6 +87,10 @@ def steps_with_money(run: Run) -> pd.DataFrame:
     delta = s["dollars_after"] - s["dollars_before"]
     s["spent"] = (-delta).clip(lower=0)
     s["income"] = delta.clip(lower=0)
+    if "dollars_after_pack" in s:
+        s["pack_income"] = (s["dollars_after_pack"] - s["dollars_after"]).clip(lower=0).fillna(0)
+    else:
+        s["pack_income"] = 0
     return s
 
 
@@ -112,7 +119,7 @@ def shop_visits(runs: list[Run]) -> pd.DataFrame:
         sold = s["income"].where(s["category"].isin(INCOME_CATEGORIES[:2]), 0)
         s = s.assign(
             sold=sold,
-            other_income=s["income"] - sold,
+            other_income=s["income"] - sold + s["pack_income"],
             is_reroll=s["category"] == "Rerolls",
             reroll_spend=s["spent"].where(s["category"] == "Rerolls", 0),
             is_buy=(s["spent"] > 0) & (s["category"] != "Rerolls"),
@@ -195,9 +202,13 @@ def income_by_source(runs: list[Run]) -> pd.DataFrame:
         if not s.empty:
             for cat, total in s[s["income"] > 0].groupby("category")["income"].sum().items():
                 rows.append({"source": cat, "kind": "shop", "per_episode": total / n})
+            if pack := s["pack_income"].sum():
+                rows.append({"source": "Pack contents", "kind": "shop", "per_episode": pack / n})
         if r.rounds is not None and "earn_total" in r.rounds:
             paid = r.rounds.dropna(subset=["earn_total"])
             for col, label in EARNINGS.items():
+                if col not in paid:
+                    continue  # older logs
                 total = paid[col].sum() * (-1 if col == "earn_rent" else 1)
                 if total:
                     rows.append({"source": label, "kind": "cash-out", "per_episode": total / n})
@@ -216,7 +227,8 @@ def income_breakdown(runs: list[Run]) -> pd.DataFrame:
         if paid.empty:
             continue
         paid["earn_rent"] = -paid["earn_rent"]
-        long = paid.melt(id_vars=["ante"], value_vars=list(EARNINGS), var_name="component")
+        cols = [c for c in EARNINGS if c in paid]
+        long = paid.melt(id_vars=["ante"], value_vars=cols, var_name="component")
         g = long.groupby(["ante", "component"], as_index=False)["value"].mean()
         g["component"] = g["component"].map(EARNINGS)
         frames.append(g.assign(run=r.name))

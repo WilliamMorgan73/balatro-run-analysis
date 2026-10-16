@@ -128,6 +128,7 @@ LOG_VERSIONS = {
     2: "cash-out breakdown and shops.jsonl",
     3: "legal actions per step",
     4: "eval episodes on fixed seeds (--eval-every)",
+    5: "cash-out money from tags",
 }
 
 
@@ -658,7 +659,9 @@ with tabs[2]:
                     st.caption(
                         "Uniform-random rate: the chance of picking the action if the agent "
                         "chose evenly among the legal actions each time it was legal. A "
-                        "preference of 1 is random-like; above 1 the agent favours it."
+                        "preference of 1 is random-like; above 1 the agent favours it. Error "
+                        "bars are 95% intervals; q is the BH-adjusted p-value of a test "
+                        "against uniform-random choice (q < 0.05: a real preference)."
                     )
                     chart(plots.availability(avail, names), "action availability")
                     st.caption(

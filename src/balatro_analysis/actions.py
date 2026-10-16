@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy import stats as sps
 
 from balatro_analysis import metrics, stats
 from balatro_analysis.loader import Run
@@ -326,7 +327,12 @@ def availability(runs: list[Run]) -> pd.DataFrame:
     """Per action: how often it was legal, how often it was chosen when legal,
     and what a uniform-random agent would choose (mean of 1/n_legal over the
     decisions where it was legal).  ``preference`` = chosen / uniform, so 1 is
-    random-like, above 1 favoured, below 1 avoided."""
+    random-like, above 1 favoured, below 1 avoided; ``preference_low/high`` is a
+    95% interval (Wilson on the chosen rate, divided by the uniform rate).
+    ``p_value`` tests "chosen as often as a uniform-random agent would": under that
+    null the count chosen has mean sum(1/n_legal) and variance sum(p(1-p)) over
+    the decisions where the action was legal (normal approximation); ``q_value``
+    is BH-adjusted within each run."""
     frames = []
     for r in runs:
         s = _with_legal(r)
@@ -337,10 +343,13 @@ def availability(runs: list[Run]) -> pd.DataFrame:
         ex["legal"] = ex["legal"].astype(int)
         ex["chosen"] = ex["legal"] == ex["action"]
         ex["uniform"] = 1.0 / ex["n_legal"]
+        ex["uniform_var"] = ex["uniform"] * (1 - ex["uniform"])
         g = ex.groupby("legal").agg(
             legal_count=("chosen", "size"),
             chosen=("chosen", "sum"),
             uniform_expected=("uniform", "mean"),
+            null_mean=("uniform", "sum"),
+            null_var=("uniform_var", "sum"),
         )
         g = g.reindex(range(len(names)), fill_value=0)
         out = pd.DataFrame(
@@ -357,8 +366,17 @@ def availability(runs: list[Run]) -> pd.DataFrame:
         out["chosen_when_legal"] = g["chosen"].to_numpy() / legal
         out["uniform_expected"] = g["uniform_expected"].where(g["legal_count"] > 0).to_numpy()
         out["preference"] = out["chosen_when_legal"] / out["uniform_expected"]
+        ci = [
+            stats.wilson_ci(int(c), int(n)) if n else (np.nan, np.nan)
+            for c, n in zip(g["chosen"], g["legal_count"], strict=True)
+        ]
+        out["preference_low"] = [lo for lo, _ in ci] / out["uniform_expected"]
+        out["preference_high"] = [hi for _, hi in ci] / out["uniform_expected"]
+        sd = np.sqrt(g["null_var"].to_numpy())
+        z = (g["chosen"].to_numpy() - g["null_mean"].to_numpy()) / np.where(sd > 0, sd, np.nan)
+        out["p_value"] = 2 * sps.norm.sf(np.abs(z))
         frames.append(out)
-    return _concat(frames)
+    return stats.with_q_values(_concat(frames))
 
 
 def legal_counts(runs: list[Run]) -> pd.DataFrame:
