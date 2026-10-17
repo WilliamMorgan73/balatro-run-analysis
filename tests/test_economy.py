@@ -7,6 +7,7 @@ Fixture shop steps (money before -> after):
                                                  (entry 9, exit 2, spent 9, sold 2)
 """
 
+import pandas as pd
 import pytest
 
 from balatro_analysis import economy
@@ -91,6 +92,17 @@ def test_old_logs_have_no_new_views(episodes_only_dir):
     for f in (economy.income_breakdown, economy.offer_conversion, economy.shop_visits):
         assert f([old]).empty
     assert economy.interest_cap(old) == 25
+
+
+def test_missing_columns_dont_raise(run):
+    """Logs without earn_rent / interest_cap / dollars_spent still render."""
+    run.rounds = run.rounds.drop(columns=["earn_rent", "interest_cap"], errors="ignore")
+    run.episodes = run.episodes.drop(columns=["dollars_spent"])
+    b = economy.income_breakdown([run]).set_index("component")["value"]
+    assert b["Blind reward"] == 3.5 and "Rent" not in b
+    assert economy.interest_efficiency([run]).iloc[0]["max_interest"] == 5
+    k = economy.kpis([run]).iloc[0]
+    assert pd.isna(k["spent_per_episode"]) and k["mean_exit"] == pytest.approx(13 / 3)
 
 
 def test_v1_boss_ante_corrected(tmp_path):

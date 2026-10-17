@@ -247,7 +247,8 @@ def income_breakdown(runs: list[Run]) -> pd.DataFrame:
         paid = r.rounds.dropna(subset=["earn_total"]).copy()
         if paid.empty:
             continue
-        paid["earn_rent"] = -paid["earn_rent"]
+        if "earn_rent" in paid:
+            paid["earn_rent"] = -paid["earn_rent"]
         cols = [c for c in EARNINGS if c in paid]
         long = paid.melt(id_vars=["ante"], value_vars=cols, var_name="component")
         g = long.groupby(["ante", "component"], as_index=False)["value"].mean()
@@ -265,7 +266,8 @@ def interest_efficiency(runs: list[Run]) -> pd.DataFrame:
         paid = r.rounds.dropna(subset=["earn_interest"]).copy()
         if paid.empty:
             continue
-        paid["max_interest"] = paid["interest_cap"].fillna(DEFAULT_INTEREST_CAP) // 5
+        cap = paid["interest_cap"] if "interest_cap" in paid else DEFAULT_INTEREST_CAP
+        paid["max_interest"] = pd.Series(cap, index=paid.index).fillna(DEFAULT_INTEREST_CAP) // 5
         g = paid.groupby("ante", as_index=False).agg(
             interest=("earn_interest", "mean"), max_interest=("max_interest", "mean")
         )
@@ -473,7 +475,7 @@ def kpis(runs: list[Run]) -> pd.DataFrame:
             {
                 "run": r.name,
                 "spent_per_episode": r.episodes["dollars_spent"].mean()
-                if len(r.episodes)
+                if "dollars_spent" in r.episodes and len(r.episodes)
                 else np.nan,
                 "sold_per_episode": v["sold"].sum() / n if len(v) else np.nan,
                 "reroll_per_episode": v["reroll_spend"].sum() / n if len(v) else np.nan,
