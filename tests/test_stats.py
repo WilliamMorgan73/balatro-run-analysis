@@ -35,6 +35,14 @@ def test_bootstrap_ci_too_few_values():
     assert all(np.isnan(stats.bootstrap_ci([3.0])))
 
 
+def test_bootstrap_diff_ci_drops_nans():
+    a, b = np.arange(1, 9, dtype=float), np.arange(3, 11, dtype=float)
+    expected = stats.bootstrap_diff_ci(a, b)
+    assert all(np.isfinite(expected))
+    assert stats.bootstrap_diff_ci(np.append(a, np.nan), np.append(b, np.nan)) == expected
+    assert all(np.isnan(stats.bootstrap_diff_ci([1.0, np.nan], b)))
+
+
 def test_wilson_ci_no_wins_is_not_degenerate():
     lo, hi = stats.wilson_ci(0, 50)
     assert lo == pytest.approx(0, abs=1e-12)
