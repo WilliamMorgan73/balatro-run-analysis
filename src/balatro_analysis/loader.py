@@ -91,7 +91,9 @@ def _load_tables(path: Path, name: str, config: dict) -> Run:
     steps = _read_jsonl(path / "steps.jsonl")
     rounds = _read_jsonl(path / "rounds.jsonl")
     shops = _read_jsonl(path / "shops.jsonl")
-    if rounds is not None and config.get("log_version", 1) < 2 and "blind_key" in rounds:
+    # v1 configs have no log_version; a run with no config at all is taken as current
+    v1 = bool(config) and config.get("log_version", 1) < 2
+    if rounds is not None and v1 and "blind_key" in rounds:
         # v1 logs read the ante after the round ended, and beating a boss advances
         # the ante first: move beaten bosses back to the ante they were played in.
         boss_won = ~rounds["blind_key"].isin(["bl_small", "bl_big"]) & rounds["beaten"].astype(bool)
