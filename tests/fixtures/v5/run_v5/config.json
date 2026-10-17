@@ -1,0 +1,63 @@
+{
+  "episodes": 12,
+  "play": "smart",
+  "seed": 0,
+  "seed_prefix": "TRAIN",
+  "decks": [
+    "b_red",
+    "b_yellow"
+  ],
+  "stakes": [
+    1
+  ],
+  "log_every": 50,
+  "out_dir": "runs",
+  "run_name": "run_v5",
+  "group": null,
+  "no_step_log": false,
+  "eval_every": 6,
+  "eval_episodes": 3,
+  "eval_seed_prefix": "EVAL",
+  "play_agent": "SmartPlayAgent",
+  "shop_agent": "RandomShopAgent",
+  "n_actions": 17,
+  "action_names": [
+    "buy_card_0",
+    "buy_card_1",
+    "buy_pack_0",
+    "buy_pack_1",
+    "buy_voucher",
+    "sell_joker_0",
+    "sell_joker_1",
+    "sell_joker_2",
+    "sell_joker_3",
+    "sell_joker_4",
+    "sell_joker_5",
+    "sell_cons_0",
+    "sell_cons_1",
+    "use_cons_0",
+    "use_cons_1",
+    "reroll",
+    "skip"
+  ],
+  "log_version": 5,
+  "eval_set": [
+    {
+      "seed": "EVAL_0",
+      "deck": "b_red",
+      "stake": 1
+    },
+    {
+      "seed": "EVAL_1",
+      "deck": "b_yellow",
+      "stake": 1
+    },
+    {
+      "seed": "EVAL_2",
+      "deck": "b_red",
+      "stake": 1
+    }
+  ],
+  "started": "2026-10-16T12:07:49",
+  "jackdaw_commit": "cf190ad"
+}
