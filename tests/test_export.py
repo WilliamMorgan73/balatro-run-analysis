@@ -48,6 +48,20 @@ def test_export_zip_contents(run):
     assert "runs/run_small/steps.csv  (8 rows)" in readme
 
 
+def test_unique_slugs():
+    assert export.unique_slugs(["x/y", "x_y", "x y", "z"]) == ["x_y", "x_y_2", "x_y_3", "z"]
+    assert export.unique_slugs(["a", "a_2", "a"]) == ["a", "a_2", "a_3"]
+
+
+def test_export_runs_with_colliding_names(run):
+    """Nested run names like "x/y" and "x_y" don't overwrite each other in the ZIP."""
+    other = metrics.filter_episodes(run, 0, 99, decks=["b_blue"])
+    run.name, other.name = "x/y", "x_y"
+    files = set(_open(export.export_zip([run, other], {})).namelist())
+    assert {"runs/x_y/episodes.csv", "runs/x_y_2/episodes.csv"} <= files
+    assert {"tables/sell_then_buy__x_y.csv", "tables/top_sequences__x_y_2.csv"} <= files
+
+
 def test_export_has_keys_and_names(run):
     z = _open(export.export_zip([run], {}))
     eps = _csv(z, "runs/run_small/episodes.csv")

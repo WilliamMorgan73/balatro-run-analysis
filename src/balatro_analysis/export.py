@@ -32,6 +32,20 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "chart"
 
 
+def unique_slugs(names: list[str]) -> list[str]:
+    """``slug`` of each name, with ``_2``, ``_3``... added to repeats ("a/b" and "a_b"
+    would otherwise share a folder in the ZIP)."""
+    out: list[str] = []
+    for name in names:
+        base = s = slug(name)
+        i = 1
+        while s in out:
+            i += 1
+            s = f"{base}_{i}"
+        out.append(s)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
@@ -105,8 +119,7 @@ def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[st
         "score_ratio": with_names(metrics.score_ratio(runs)),
         "deaths": with_names(metrics.deaths(runs)),
     }
-    for r in runs:
-        tag = slug(r.name)
+    for r, tag in zip(runs, unique_slugs([r.name for r in runs]), strict=True):
         tables[f"action_by_ante__{tag}"] = (
             metrics.action_by_ante(r).rename_axis("action").reset_index()
             if r.steps is not None
@@ -145,8 +158,8 @@ def export_zip(
             z.writestr(path, _csv(df))
             written.append(f"{path}  ({len(df)} rows)")
 
-        for r in runs:
-            base = f"runs/{slug(r.name)}"
+        for r, tag in zip(runs, unique_slugs([r.name for r in runs]), strict=True):
+            base = f"runs/{tag}"
             put(f"{base}/episodes.csv", with_names(r.episodes))
             if r.steps is not None:
                 put(f"{base}/steps.csv", with_names(r.steps))
