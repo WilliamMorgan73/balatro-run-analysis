@@ -88,6 +88,13 @@ def _load_tables(path: Path, name: str, config: dict) -> Run:
             episodes[col] = values[0] if len(values) == 1 else UNKNOWN
         episodes[col] = episodes[col].fillna(UNKNOWN).astype(str)
 
+    # log_version 6: ``ante`` is the ante the run ended on (9 for a win, lowered
+    # by Hieroglyph/Petroglyph); ``max_ante`` is the highest ante played, which is
+    # what every view means by "ante reached"
+    if "max_ante" in episodes:
+        episodes["final_ante"] = episodes["ante"]
+        episodes["ante"] = episodes["max_ante"]
+
     steps = _read_jsonl(path / "steps.jsonl")
     rounds = _read_jsonl(path / "rounds.jsonl")
     shops = _read_jsonl(path / "shops.jsonl")

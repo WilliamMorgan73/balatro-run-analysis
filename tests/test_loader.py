@@ -46,3 +46,21 @@ def test_old_run_deck_from_config(episodes_only_dir):
     (episodes_only_dir / "old_run" / "config.json").write_text('{"decks": ["b_blue"]}')
     (run,) = load_runs(episodes_only_dir)
     assert set(run.episodes["deck"]) == {"b_blue"}
+
+
+def test_max_ante_is_the_ante_reached(copied_runs):
+    """log_version 6: a win ends on ante 9 and a Hieroglyph run below its best;
+    max_ante (highest ante played) is what the views use."""
+    import pandas as pd
+
+    from balatro_analysis import metrics
+
+    path = copied_runs / "run_small" / "episodes.csv"
+    e = pd.read_csv(path)
+    e["ante"], e["max_ante"] = [2, 9, 1], [3, 8, 1]  # set back from 3; a win
+    e.to_csv(path, index=False)
+    run = load_run(copied_runs / "run_small")
+    assert run.episodes["ante"].tolist() == [3, 8, 1]
+    assert run.episodes["final_ante"].tolist() == [2, 9, 1]
+    s = metrics.summary([run]).iloc[0]
+    assert s["max ante"] == 8 and s["mean ante"] == 4

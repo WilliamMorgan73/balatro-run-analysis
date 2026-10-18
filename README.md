@@ -113,6 +113,12 @@ runs (only `episodes.csv`, no deck column) still load; tabs that need missing da
 moves them back to the ante they were played in.
 † `log_version` 3 runs.
 
+From `log_version` 6, `episodes.csv` has `max_ante`, the highest ante a blind was played in. The
+loader uses it as the episode's ante (the raw `ante` column, the ante the run ended on, is kept as
+`final_ante`), so a win counts as ante 8, not 9, and a Hieroglyph or Petroglyph setback doesn't
+lower how far the run got. In `steps.jsonl`, a sell's `item_cost` is what the card sold for (it
+was the card's buy price before).
+
 Runs made with `--eval-every` (`log_version` 4) also have an `eval/` folder in the same format:
 greedy episodes on the fixed seeds `EVAL_0..K-1`, played before training and after every N
 training episodes, with `eval_round` and `train_episodes` columns. Every run with the same eval
