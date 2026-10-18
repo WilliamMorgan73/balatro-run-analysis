@@ -137,3 +137,17 @@ def test_no_steps(episodes_only_dir):
     assert actions.share_by(old, "Ante").empty
     assert actions.top_sequences(old).empty
     assert not actions.family_share([old]).empty  # from episodes.csv counts
+
+
+def test_availability_with_no_steps_left(run):
+    """A run whose steps are all filtered away (e.g. an eval round with no shop
+    decisions) is skipped, not a KeyError."""
+    import copy
+
+    empty = copy.copy(run)
+    empty.name = "empty"
+    empty.steps = run.steps.iloc[0:0]
+    assert actions.availability([empty]).empty
+    assert actions.legal_counts([empty]).empty
+    both = actions.availability([run, empty])
+    assert set(both["run"]) == {run.name}

@@ -317,9 +317,11 @@ def action_outcome_correlations(runs: list[Run]) -> pd.DataFrame:
 
 def _with_legal(run: Run) -> pd.DataFrame:
     """Steps that carry a ``legal`` list, with ``n_legal``; empty for old logs."""
-    if run.steps is None or "legal" not in run.steps:
+    if run.steps is None or "legal" not in run.steps or run.steps.empty:
         return pd.DataFrame()
-    s = run.steps[run.steps["legal"].map(lambda v: isinstance(v, list) and len(v) > 0)]
+    # astype(bool): an empty mask is object-typed and would select columns, not rows
+    has = run.steps["legal"].map(lambda v: isinstance(v, list) and len(v) > 0).astype(bool)
+    s = run.steps[has]
     return s.assign(n_legal=s["legal"].map(len))
 
 
