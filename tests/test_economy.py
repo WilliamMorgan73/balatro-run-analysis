@@ -106,7 +106,8 @@ def test_missing_columns_dont_raise(run):
 
 
 def test_v1_boss_ante_corrected(tmp_path):
-    """Log v1 filed beaten bosses under the next ante; the loader moves them back."""
+    """Log v1 filed beaten bosses under the next ante; the loader moves them back.
+    v1 configs have no log_version; with no config.json at all nothing is moved."""
     import json
 
     d = tmp_path / "v1"
@@ -120,6 +121,8 @@ def test_v1_boss_ante_corrected(tmp_path):
         {**common, "round": 4, "blind_key": "bl_small", "beaten": False},
     ]
     (d / "rounds.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert load_run(d).rounds["ante"].tolist() == [2, 2]  # no config: current format
+    (d / "config.json").write_text('{"episodes": 1}')  # v1: no log_version
     assert load_run(d).rounds["ante"].tolist() == [1, 2]
     (d / "config.json").write_text('{"log_version": 2}')
     assert load_run(d).rounds["ante"].tolist() == [2, 2]
