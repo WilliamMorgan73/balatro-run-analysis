@@ -151,6 +151,21 @@ def test_pack_income(run):
     assert v["other_income"].sum() >= 6
 
 
+def test_pack_loss(run):
+    """Money lost while a pack is open (Wraith sets it to $0) is kept, not clipped."""
+    s = run.steps
+    s["dollars_after_pack"] = None
+    first = s.index[0]
+    s.loc[first, "dollars_after_pack"] = s.loc[first, "dollars_after"] - 3
+    s.loc[s.index[1], ["dollars_before", "dollars_after"]] -= 3
+    inc = economy.income_by_source([run]).set_index("source")
+    assert inc.loc["Lost in packs", "per_episode"] == pytest.approx(-3 / 3)
+    assert "Pack contents" not in inc.index
+    v = economy.shop_visits([run]).set_index(["episode", "round"])
+    assert v.loc[(0, 1), "pack_loss"] == 3
+    assert v["pack_loss"].sum() == 3
+
+
 def test_interest_cap_per_visit(copied_runs):
     """Seed Money / Money Tree raise the cap mid-run: each visit uses the cap at the
     next cash-out (the next blind's row), falling back to its own round's row."""

@@ -78,8 +78,8 @@ def category(action_name: str, item_key) -> str | None:
 
 def steps_with_money(run: Run) -> pd.DataFrame:
     """Shop steps with ``category``, ``spent`` and ``income`` (both >= 0), and
-    ``pack_income``: money gained while a pack bought by this step was open
-    (e.g. The Hermit; log_version 5, else 0)."""
+    ``pack_income`` / ``pack_loss``: money gained / lost while a pack bought by this
+    step was open (e.g. The Hermit / Wraith; log_version 5, else 0)."""
     if run.steps is None or run.steps.empty:
         return pd.DataFrame()
     s = run.steps.sort_values(["episode", "step"]).copy()
@@ -88,9 +88,11 @@ def steps_with_money(run: Run) -> pd.DataFrame:
     s["spent"] = (-delta).clip(lower=0)
     s["income"] = delta.clip(lower=0)
     if "dollars_after_pack" in s:
-        s["pack_income"] = (s["dollars_after_pack"] - s["dollars_after"]).clip(lower=0).fillna(0)
+        pack = (s["dollars_after_pack"] - s["dollars_after"]).fillna(0)
+        s["pack_income"] = pack.clip(lower=0)
+        s["pack_loss"] = (-pack).clip(lower=0)
     else:
-        s["pack_income"] = 0
+        s["pack_income"] = s["pack_loss"] = 0
     return s
 
 
@@ -150,6 +152,7 @@ def shop_visits(runs: list[Run]) -> pd.DataFrame:
             spent=("spent", "sum"),
             sold=("sold", "sum"),
             other_income=("other_income", "sum"),
+            pack_loss=("pack_loss", "sum"),
             rerolls=("is_reroll", "sum"),
             reroll_spend=("reroll_spend", "sum"),
             buys=("is_buy", "sum"),
@@ -223,6 +226,8 @@ def income_by_source(runs: list[Run]) -> pd.DataFrame:
                 rows.append({"source": cat, "kind": "shop", "per_episode": total / n})
             if pack := s["pack_income"].sum():
                 rows.append({"source": "Pack contents", "kind": "shop", "per_episode": pack / n})
+            if lost := s["pack_loss"].sum():
+                rows.append({"source": "Lost in packs", "kind": "shop", "per_episode": -lost / n})
         if r.rounds is not None and "earn_total" in r.rounds:
             paid = r.rounds.dropna(subset=["earn_total"])
             for col, label in EARNINGS.items():
