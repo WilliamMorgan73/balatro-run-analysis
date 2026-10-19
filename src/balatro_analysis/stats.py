@@ -58,8 +58,10 @@ def bootstrap_diff_ci(
     level: float = LEVEL,
     seed: int = SEED,
 ) -> tuple[float, float]:
-    """Percentile bootstrap CI of ``mean(a) - mean(b)`` for independent samples."""
+    """Percentile bootstrap CI of ``mean(a) - mean(b)`` for independent samples
+    (NaNs dropped); (nan, nan) if either has fewer than 2 values."""
     a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    a, b = a[~np.isnan(a)], b[~np.isnan(b)]
     if len(a) < 2 or len(b) < 2:
         return float("nan"), float("nan")
     rng = np.random.default_rng(seed)
