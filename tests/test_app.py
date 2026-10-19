@@ -48,6 +48,7 @@ def _run(
 ) -> AppTest:
     """Run the app on ``runs_dir``; tabs render lazily, so pick the one to inspect."""
     at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["runs_dir"] = str(runs_dir)  # never the developer's real runs folder
     if game is not None:
         at.session_state["game_path"] = str(game)
     if tab:
@@ -57,7 +58,6 @@ def _run(
     if actions:
         at.session_state["actions_tab"] = actions
     at.run()
-    at.text_input(key="runs_dir").set_value(str(runs_dir)).run()
     return at
 
 
@@ -417,14 +417,74 @@ def test_explorer_tables_show_icons_not_lists(runs_dir, fake_game, pretty):
     if not pretty:
         at.toggle(key="pretty").set_value(False).run()
     assert not at.exception
-    frames = [d.value for d in at.dataframe]
-    shop = next(f for f in frames if any("icons" in str(c) for c in f.columns))
-    icons = next(c for c in shop.columns if str(c).startswith(("Jokers", "jokers_before")))
-    assert shop[icons].str.startswith("data:image/png;base64,", na=True).all()
-    assert shop[icons].notna().any()  # j_joker has art in the fake install
+    frames = [d.value for d in at.main.dataframe]
+    episodes, shop = frames[0], frames[1]  # episode finder, then the shop decisions
+    for table, icons in (
+        (shop, "Jokers before icons" if pretty else "jokers_before_icons"),
+        (episodes, "Final jokers icons" if pretty else "final_jokers_icons"),
+    ):
+        assert table[icons].str.startswith("data:image/png;base64,", na=True).all()
+        assert table[icons].notna().any()  # j_joker has art in the fake install
     for f in frames:
         assert not f.map(lambda v: isinstance(v, list)).any().any()
     blinds = frames[-1]  # Blinds played: held entering each blind, with icons
     held, icons = ("Jokers", "Jokers icons") if pretty else ("jokers", "jokers_icons")
     assert {held, icons} <= set(blinds.columns)
     assert blinds[icons].notna().any()
+
+
+# --- Finding episodes and runs (#17) ------------------------------------------
+
+
+def test_suggestion_opens_episode(runs_dir):
+    at = _run(runs_dir, tab="Episode explorer")
+    _episode_box(at).set_value(2).run()
+    assert _episode_box(at).value == 2
+    labels = [b.label for b in at.button if b.key and b.key.startswith("suggest_")]
+    assert "Best: 0" in labels and any(lbl.startswith("Closest loss") for lbl in labels)
+    at.button(key="suggest_Best").click().run()
+    assert not at.exception
+    assert _episode_box(at).value == 0
+
+
+def test_episode_filters_narrow_the_choice(runs_dir):
+    at = _run(runs_dir, tab="Episode explorer")
+    at.multiselect(key="ep_decks").set_value(["b_blue"]).run()
+    assert not at.exception
+    assert _episode_box(at).options == ["1  (Blue Deck, ante 1, 4 shop steps)"]
+    assert _episode_box(at).value == 1
+    at.multiselect(key="ep_jokers").set_value(["j_joker"]).run()  # blue deck ep ended with Banner
+    assert any("No episodes match" in c.value for c in at.caption)
+    assert len(_episode_box(at).options) == 3  # falls back to every episode
+
+
+def test_deep_link_opens_episode(runs_dir):
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["runs_dir"] = str(runs_dir)
+    at.query_params["run"] = "run_small"
+    at.query_params["episode"] = "2"
+    at.run()
+    assert not at.exception
+    assert at.session_state["main_tab"] == "Episode explorer"
+    assert _episode_box(at).value == 2
+    _episode_box(at).set_value(1).run()
+    assert at.query_params["episode"] == "1"  # the URL follows the selection
+
+
+def test_find_runs_keeps_hidden_selection(runs_dir, tmp_path):
+    for name in ("run_small", "run_copy"):
+        shutil.copytree(runs_dir / "run_small", tmp_path / name)
+    at = _run(tmp_path)
+    runs = at.sidebar.multiselect[0]
+    assert runs.value == ["run_copy", "run_small"]
+    at.text_input(key="run_search").set_value("copy").run()
+    assert not at.exception
+    assert at.sidebar.multiselect[0].value == ["run_copy", "run_small"]  # nothing dropped
+    assert any("hidden by the filters" in c.value for c in at.sidebar.caption)
+    shown = next(d.value for d in at.sidebar.dataframe)  # stats of the runs shown
+    assert shown.index.tolist() == ["run_copy"]
+    next(b for b in at.sidebar.button if b.label == "Clear").click().run()
+    assert not at.exception
+    assert at.sidebar.multiselect[0].value == []
+    next(b for b in at.sidebar.button if b.label == "All shown").click().run()
+    assert at.sidebar.multiselect[0].value == ["run_copy"]  # only what the search shows

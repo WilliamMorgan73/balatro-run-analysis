@@ -511,4 +511,9 @@ def episode_rounds(run: Run, episode: int) -> pd.DataFrame:
         rounds[col] = [
             last.at[r - 1, src] if r - 1 in last.index else None for r in rounds["round"]
         ]
+    if "beaten" in rounds:  # held items next to the outcome, before the cash-out columns
+        held = [c for c in ("jokers", "consumables") if c in rounds]
+        rest = [c for c in rounds if c not in held]
+        at = rest.index("beaten") + 1
+        rounds = rounds[rest[:at] + held + rest[at:]]
     return rounds
