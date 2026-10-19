@@ -7,6 +7,7 @@ Fixture shop steps (money before -> after):
                                                  (entry 9, exit 2, spent 9, sold 2)
 """
 
+import pandas as pd
 import pytest
 
 from balatro_analysis import economy
@@ -44,6 +45,14 @@ def test_spend_and_income(run):
     assert inc.loc["Selling jokers", "per_episode"] == pytest.approx(2 / 3)
     assert inc.loc["Blind reward", "per_episode"] == pytest.approx(7 / 3)
     assert inc.loc["Interest", "kind"] == "cash-out"
+
+
+def test_spend_by_ante_per_episode_that_reached_it(run):
+    """Only ep0 reaches the ante-2 shop: its $6 is $6 per episode there, not $2."""
+    s = economy.spend_by_category([run], by_ante=True).set_index(["ante", "category"])
+    assert s.loc[(2, "Jokers"), "per_episode"] == pytest.approx(6)
+    assert s.loc[(1, "Jokers"), "per_episode"] == pytest.approx(14 / 2)  # ep0, ep1
+    assert economy.spend_by_category([run]).iloc[0]["per_episode"] == pytest.approx(20 / 3)
 
 
 def test_money_by_round(run):
@@ -93,8 +102,20 @@ def test_old_logs_have_no_new_views(episodes_only_dir):
     assert economy.interest_cap(old) == 25
 
 
+def test_missing_columns_dont_raise(run):
+    """Logs without earn_rent / interest_cap / dollars_spent still render."""
+    run.rounds = run.rounds.drop(columns=["earn_rent", "interest_cap"], errors="ignore")
+    run.episodes = run.episodes.drop(columns=["dollars_spent"])
+    b = economy.income_breakdown([run]).set_index("component")["value"]
+    assert b["Blind reward"] == 3.5 and "Rent" not in b
+    assert economy.interest_efficiency([run]).iloc[0]["max_interest"] == 5
+    k = economy.kpis([run]).iloc[0]
+    assert pd.isna(k["spent_per_episode"]) and k["mean_exit"] == pytest.approx(13 / 3)
+
+
 def test_v1_boss_ante_corrected(tmp_path):
-    """Log v1 filed beaten bosses under the next ante; the loader moves them back."""
+    """Log v1 filed beaten bosses under the next ante; the loader moves them back.
+    v1 configs have no log_version; with no config.json at all nothing is moved."""
     import json
 
     d = tmp_path / "v1"
@@ -108,6 +129,8 @@ def test_v1_boss_ante_corrected(tmp_path):
         {**common, "round": 4, "blind_key": "bl_small", "beaten": False},
     ]
     (d / "rounds.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert load_run(d).rounds["ante"].tolist() == [2, 2]  # no config: current format
+    (d / "config.json").write_text('{"episodes": 1}')  # v1: no log_version
     assert load_run(d).rounds["ante"].tolist() == [1, 2]
     (d / "config.json").write_text('{"log_version": 2}')
     assert load_run(d).rounds["ante"].tolist() == [2, 2]
@@ -134,6 +157,21 @@ def test_pack_income(run):
     assert inc.loc["Pack contents", "per_episode"] == pytest.approx(6 / 3)
     v = economy.shop_visits([run])
     assert v["other_income"].sum() >= 6
+
+
+def test_pack_loss(run):
+    """Money lost while a pack is open (Wraith sets it to $0) is kept, not clipped."""
+    s = run.steps
+    s["dollars_after_pack"] = None
+    first = s.index[0]
+    s.loc[first, "dollars_after_pack"] = s.loc[first, "dollars_after"] - 3
+    s.loc[s.index[1], ["dollars_before", "dollars_after"]] -= 3
+    inc = economy.income_by_source([run]).set_index("source")
+    assert inc.loc["Lost in packs", "per_episode"] == pytest.approx(-3 / 3)
+    assert "Pack contents" not in inc.index
+    v = economy.shop_visits([run]).set_index(["episode", "round"])
+    assert v.loc[(0, 1), "pack_loss"] == 3
+    assert v["pack_loss"].sum() == 3
 
 
 def test_interest_cap_per_visit(copied_runs):

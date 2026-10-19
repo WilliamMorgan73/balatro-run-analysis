@@ -4,15 +4,21 @@ The shop agent acts in a 17-action space (5 buy + 6 sell joker + 2 sell
 consumable + 2 use consumable + reroll + skip).  Every other phase (blind
 select, play/discard, cash out, pack opening) is handled by the play agent.
 
-Random agents don't learn: this is the training loop's plumbing plus the
-random baseline.  A learning shop agent (e.g. a Dueling DQN) implements the
-same ``act`` / ``observe`` interface and drops in for ``RandomShopAgent``.
+Random agents don't learn: this is the training loop's plumbing plus the random
+baseline.  Use ``--play smart`` for shop experiments: the random play agent
+almost never beats the first blind, so with ``--play random`` the shop is
+hardly ever reached (0.05 shop decisions per episode, against ~7 with smart).
+A learning shop agent (e.g. a Dueling DQN) implements the same ``act`` /
+``observe`` interface and drops in for ``RandomShopAgent``.
 
 Each run writes ``runs/<run-name>/``: ``config.json``, ``episodes.csv`` (one
-row per episode), ``steps.jsonl`` (one line per shop decision, with the actions
-that were legal), ``rounds.jsonl`` (one line per blind, with the cash-out
-breakdown) and ``shops.jsonl`` (what each shop offered, on entry and after
-rerolls).  Visualise them with balatro-run-analysis.
+row per episode; ``max_ante`` is the highest ante a blind was played in, so a
+win is 8 and a Hieroglyph/Petroglyph setback doesn't lower it, while ``ante``
+is the ante the run ended on), ``steps.jsonl`` (one line per shop decision,
+with the actions that were legal and ``item_cost``: a buy's price, a sell's
+sale value), ``rounds.jsonl`` (one line per blind, with the cash-out breakdown)
+and ``shops.jsonl`` (what each shop offered, on entry and after rerolls).
+Visualise them with balatro-run-analysis.
 
 With ``--eval-every N`` the shop agent is also scored greedily, before
 training and after every N training episodes, on a fixed set of seeds
@@ -220,12 +226,17 @@ def make_play_agent(kind: str, rng: random.Random) -> RandomPlayAgent | SmartPla
 
 
 def r_ante(prev_ante: int, curr_ante: int, alpha: float = 1.0) -> float:
-    """alpha * k when ante k is cleared, else 0."""
+    """alpha * k when ante k is cleared, else 0.  ShopEnv passes the highest ante
+    reached so far as ``prev_ante``, so an ante cleared again after Hieroglyph or
+    Petroglyph set the run back pays nothing."""
     return alpha * prev_ante if curr_ante > prev_ante else 0.0
 
 
 def shop_item_key(gs: dict[str, Any], a: int) -> tuple[str | None, int | None]:
-    """(center_key, cost) of the item shop action ``a`` targets, read before stepping."""
+    """(center_key, cost) of the item shop action ``a`` targets, read before stepping.
+
+    ``cost`` is what the action moves: the price for a buy, what the card sells
+    for (``sell_cost``) for a sell, and the card's price for a use."""
     if a in BUY_CARD:
         items, slot = gs.get("shop_cards", []), a - BUY_CARD[0]
     elif a in BUY_PACK:
@@ -242,7 +253,8 @@ def shop_item_key(gs: dict[str, Any], a: int) -> tuple[str | None, int | None]:
         return None, None
     if slot >= len(items):
         return None, None
-    return items[slot].center_key, items[slot].cost
+    item = items[slot]
+    return item.center_key, item.sell_cost if a in SELL_JOKER or a in SELL_CONS else item.cost
 
 
 class RunLogger:
@@ -297,12 +309,14 @@ class ShopEnv:
         back_keys: tuple[str, ...] = ("b_red",),
         stakes: tuple[int, ...] = (1,),
         logger: RunLogger | None = None,
+        rng_seed: int | str | None = None,
     ) -> None:
         self.env = BalatroEnvironment(
             adapter_factory=DirectAdapter,
             seed_prefix=seed_prefix,
             back_keys=list(back_keys),
             stakes=list(stakes),
+            rng_seed=rng_seed,  # deck/stake choice
         )
         self.play_agent = play_agent
         self.logger = logger
@@ -325,6 +339,8 @@ class ShopEnv:
         self._pending_round: dict[str, Any] | None = None
         self.episode = self.episode + 1 if episode is None else episode
         self.step_idx = 0
+        self.max_ante = 1  # highest round_resets.ante so far: r_ante pays only past it
+        self.max_ante_played = 0  # highest ante a blind was played in (logged)
         if deck is not None:
             self.env._back_keys = [deck]
         if stake is not None:
@@ -339,7 +355,6 @@ class ShopEnv:
 
     def step(self, a: int) -> tuple[np.ndarray, np.ndarray, float, bool, dict[str, Any]]:
         gs = self.gs
-        prev_ante = self.env.episode_ante
         dollars_before = gs["dollars"]
         item_key, item_cost = shop_item_key(gs, a)
         context = {
@@ -366,7 +381,8 @@ class ShopEnv:
         # Picks from a pack (resolved by the play agent) can change money, e.g. The
         # Hermit or selling to make room; record the money once the pack closes.
         dollars_after_pack = self.gs["dollars"] if opened_pack and not done else None
-        reward = r_ante(prev_ante, self.env.episode_ante)
+        reward = r_ante(self.max_ante, self.env.episode_ante)
+        self.max_ante = max(self.max_ante, self.env.episode_ante)
         if self.logger:
             self.logger.log_step(
                 episode=self.episode,
@@ -400,6 +416,7 @@ class ShopEnv:
             obs, term, trunc, mask, info = self.env.step(a)
             self._obs, self._mask = obs, info["action_mask"]
             if was_playing and self.gs["phase"] != GamePhase.SELECTING_HAND:
+                self.max_ante_played = max(self.max_ante_played, ante_played)
                 self._log_round(ante_played)
             if cashing_out and self.gs["phase"] != GamePhase.ROUND_EVAL:
                 self._flush_round(paid=self.gs["dollars"] - dollars_before)
@@ -490,6 +507,7 @@ class ShopEnv:
 EPISODE_FIELDS = [
     "episode",
     "ante",
+    "max_ante",
     "won",
     "return",
     "shop_steps",
@@ -531,6 +549,7 @@ def run_episode(
     return {
         "episode": env.episode,
         "ante": info["ante"],
+        "max_ante": env.max_ante_played,
         "won": int(info["won"]),
         "return": ep_return,
         "shop_steps": ep_steps,
@@ -615,8 +634,13 @@ class Evaluator:
 
 
 def train(args: argparse.Namespace) -> None:
+    if args.play == "random":
+        print(
+            "warning: --play random almost never beats a blind, so the shop is hardly"
+            " ever reached; use --play smart for shop experiments"
+        )
     rng = random.Random(args.seed)
-    random.seed(args.seed)  # BalatroEnvironment samples back_keys/stakes from global random
+    random.seed(args.seed)  # anything else drawing from global random
     play_agent = make_play_agent(args.play, rng)
     shop_agent: ShopAgent = RandomShopAgent(rng, eval_rng=random.Random(f"eval_{args.seed}"))
 
@@ -629,6 +653,7 @@ def train(args: argparse.Namespace) -> None:
         back_keys=tuple(args.decks),
         stakes=tuple(args.stakes),
         logger=logger,
+        rng_seed=args.seed,
     )
     evaluator = Evaluator(args, out_dir / "eval") if args.eval_every > 0 else None
     write_config(out_dir, args, play_agent, shop_agent)
@@ -648,11 +673,11 @@ def train(args: argparse.Namespace) -> None:
     def evaluate(train_episodes: int) -> None:
         assert evaluator is not None
         rows = evaluator.run(shop_agent, train_episodes)
-        antes = [r["ante"] for r in rows]
+        antes = [r["max_ante"] for r in rows]
         wins = sum(r["won"] for r in rows)
         print(
             f"eval {evaluator.round - 1:3d} after {train_episodes:5d} train episodes: "
-            f"mean ante {np.mean(antes):.2f}  wins {wins}/{len(rows)}"
+            f"mean max ante {np.mean(antes):.2f}  wins {wins}/{len(rows)}"
         )
         if writer:
             writer.add_scalar("eval/ante", float(np.mean(antes)), train_episodes)
@@ -666,17 +691,17 @@ def train(args: argparse.Namespace) -> None:
     for ep in range(args.episodes):
         row = run_episode(env, shop_agent, learn=True)
         total_steps += row["shop_steps"]
-        antes.append(row["ante"])
+        antes.append(row["max_ante"])
         log.writerow(row)
         csv_file.flush()
         if writer:
-            for key in ("ante", "won", "return", "shop_steps", "dollars_spent"):
+            for key in ("ante", "max_ante", "won", "return", "shop_steps", "dollars_spent"):
                 writer.add_scalar(f"episode/{key}", row[key], total_steps)
         if (ep + 1) % args.log_every == 0:
             recent = antes[-args.log_every :]
             print(
                 f"ep {ep + 1:5d}  steps {total_steps:7d}  "
-                f"mean ante (last {len(recent)}) {np.mean(recent):.2f}  max {max(recent)}"
+                f"mean max ante (last {len(recent)}) {np.mean(recent):.2f}  max {max(recent)}"
             )
         if evaluator and ((ep + 1) % args.eval_every == 0 or ep + 1 == args.episodes):
             evaluate(ep + 1)
@@ -694,7 +719,7 @@ def train(args: argparse.Namespace) -> None:
         f"{time.perf_counter() - t_start:.1f}s"
     )
     print(
-        f"mean ante {np.mean(antes):.2f}; ante reached: "
+        f"mean max ante {np.mean(antes):.2f}; max ante reached: "
         + ", ".join(f"{k}: {dist[k]}" for k in sorted(dist))
     )
     print(f"logs: {out_dir}/")
@@ -725,7 +750,11 @@ def write_config(out_dir: Path, args: argparse.Namespace, play_agent: Any, shop_
         # the engine reports rent in earn_rent (it was always 0 before);
         # steps.jsonl dollars_after_pack; shops_visited no longer counts
         # returns from a pack as a new shop
-        "log_version": 5,
+        # 6: episodes.csv max_ante (highest ante a blind was played in: 8 for a
+        # win, not lowered by Hieroglyph/Petroglyph); r_ante pays only for a new
+        # highest ante; deck/stake drawn from the env's own RNG (--seed);
+        # steps.jsonl item_cost of a sell is what it sells for (was its price)
+        "log_version": 6,
         "eval_set": [
             {"seed": seed, "deck": deck, "stake": stake} for seed, deck, stake in eval_set(args)
         ]
@@ -744,7 +773,7 @@ def main() -> None:
         "--play",
         choices=["random", "smart"],
         default="random",
-        help="non-shop policy: random, or Jackdaw's greedy smart_agent",
+        help="non-shop policy: random (rarely reaches a shop), or Jackdaw's greedy smart_agent",
     )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--seed-prefix", default="TRAIN")

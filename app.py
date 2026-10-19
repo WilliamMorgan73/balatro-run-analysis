@@ -130,6 +130,7 @@ LOG_VERSIONS = {
     3: "legal actions per step",
     4: "eval episodes on fixed seeds (--eval-every)",
     5: "cash-out money from tags",
+    6: "highest ante reached (max_ante); a sell's item_cost is its sale value",
 }
 
 

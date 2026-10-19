@@ -78,8 +78,8 @@ def category(action_name: str, item_key) -> str | None:
 
 def steps_with_money(run: Run) -> pd.DataFrame:
     """Shop steps with ``category``, ``spent`` and ``income`` (both >= 0), and
-    ``pack_income``: money gained while a pack bought by this step was open
-    (e.g. The Hermit; log_version 5, else 0)."""
+    ``pack_income`` / ``pack_loss``: money gained / lost while a pack bought by this
+    step was open (e.g. The Hermit / Wraith; log_version 5, else 0)."""
     if run.steps is None or run.steps.empty:
         return pd.DataFrame()
     s = run.steps.sort_values(["episode", "step"]).copy()
@@ -88,9 +88,11 @@ def steps_with_money(run: Run) -> pd.DataFrame:
     s["spent"] = (-delta).clip(lower=0)
     s["income"] = delta.clip(lower=0)
     if "dollars_after_pack" in s:
-        s["pack_income"] = (s["dollars_after_pack"] - s["dollars_after"]).clip(lower=0).fillna(0)
+        pack = (s["dollars_after_pack"] - s["dollars_after"]).fillna(0)
+        s["pack_income"] = pack.clip(lower=0)
+        s["pack_loss"] = (-pack).clip(lower=0)
     else:
-        s["pack_income"] = 0
+        s["pack_income"] = s["pack_loss"] = 0
     return s
 
 
@@ -150,6 +152,7 @@ def shop_visits(runs: list[Run]) -> pd.DataFrame:
             spent=("spent", "sum"),
             sold=("sold", "sum"),
             other_income=("other_income", "sum"),
+            pack_loss=("pack_loss", "sum"),
             rerolls=("is_reroll", "sum"),
             reroll_spend=("reroll_spend", "sum"),
             buys=("is_buy", "sum"),
@@ -194,18 +197,24 @@ def money_by_round(runs: list[Run]) -> pd.DataFrame:
 
 
 def spend_by_category(runs: list[Run], by_ante: bool = False) -> pd.DataFrame:
-    """Total and share of shop spending per category (optionally per ante)."""
+    """Total and share of shop spending per category (optionally per ante).
+
+    ``per_episode`` is per episode of the run, or with ``by_ante`` per episode
+    that reached that ante's shop (so late antes aren't diluted by early deaths).
+    """
     frames = []
     for r in runs:
         s = steps_with_money(r)
         if s.empty:
             continue
+        reached = s.groupby("ante")["episode"].nunique()
         s = s[s["category"].isin(BUY_CATEGORIES) & (s["spent"] > 0)]
         keys = ["ante", "category"] if by_ante else ["category"]
         g = s.groupby(keys, as_index=False)["spent"].sum()
         totals = g.groupby("ante")["spent"].transform("sum") if by_ante else g["spent"].sum()
         g["share"] = g["spent"] / totals
-        g["per_episode"] = g["spent"] / max(len(r.episodes), 1)
+        n = g["ante"].map(reached) if by_ante else max(len(r.episodes), 1)
+        g["per_episode"] = g["spent"] / n
         frames.append(g.assign(run=r.name))
     return _concat(frames)
 
@@ -223,6 +232,8 @@ def income_by_source(runs: list[Run]) -> pd.DataFrame:
                 rows.append({"source": cat, "kind": "shop", "per_episode": total / n})
             if pack := s["pack_income"].sum():
                 rows.append({"source": "Pack contents", "kind": "shop", "per_episode": pack / n})
+            if lost := s["pack_loss"].sum():
+                rows.append({"source": "Lost in packs", "kind": "shop", "per_episode": -lost / n})
         if r.rounds is not None and "earn_total" in r.rounds:
             paid = r.rounds.dropna(subset=["earn_total"])
             for col, label in EARNINGS.items():
@@ -247,7 +258,8 @@ def income_breakdown(runs: list[Run]) -> pd.DataFrame:
         paid = r.rounds.dropna(subset=["earn_total"]).copy()
         if paid.empty:
             continue
-        paid["earn_rent"] = -paid["earn_rent"]
+        if "earn_rent" in paid:
+            paid["earn_rent"] = -paid["earn_rent"]
         cols = [c for c in EARNINGS if c in paid]
         long = paid.melt(id_vars=["ante"], value_vars=cols, var_name="component")
         g = long.groupby(["ante", "component"], as_index=False)["value"].mean()
@@ -265,7 +277,8 @@ def interest_efficiency(runs: list[Run]) -> pd.DataFrame:
         paid = r.rounds.dropna(subset=["earn_interest"]).copy()
         if paid.empty:
             continue
-        paid["max_interest"] = paid["interest_cap"].fillna(DEFAULT_INTEREST_CAP) // 5
+        cap = paid["interest_cap"] if "interest_cap" in paid else DEFAULT_INTEREST_CAP
+        paid["max_interest"] = pd.Series(cap, index=paid.index).fillna(DEFAULT_INTEREST_CAP) // 5
         g = paid.groupby("ante", as_index=False).agg(
             interest=("earn_interest", "mean"), max_interest=("max_interest", "mean")
         )
@@ -473,7 +486,7 @@ def kpis(runs: list[Run]) -> pd.DataFrame:
             {
                 "run": r.name,
                 "spent_per_episode": r.episodes["dollars_spent"].mean()
-                if len(r.episodes)
+                if "dollars_spent" in r.episodes and len(r.episodes)
                 else np.nan,
                 "sold_per_episode": v["sold"].sum() / n if len(v) else np.nan,
                 "reroll_per_episode": v["reroll_spend"].sum() / n if len(v) else np.nan,
