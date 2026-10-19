@@ -1,4 +1,5 @@
-"""Joker effect text, read from the player's own copy of Balatro.
+"""Joker, deck, blind, consumable, voucher and pack effect text, read from the
+player's own copy of Balatro.
 
 No game text is stored in this repo. From the game archive (see ``sprites``):
 
@@ -10,6 +11,9 @@ No game text is stored in this repo. From the game archive (see ``sprites``):
   against the joker's *starting* ability (what the in-game collection shows),
   with a tiny whitelisted evaluator, never ``eval``. Values that depend on a
   live run (e.g. cards left in deck) come out as "?".
+- ``functions/common_events.lua`` (``generate_card_ui``) does the same for
+  consumables, vouchers and packs (``_c.config.extra``, ...); planets read the
+  hand's level-1 values from ``game.lua``'s hands table.
 """
 
 from __future__ import annotations
@@ -284,9 +288,72 @@ def parse_loc_vars(card_lua: str) -> dict[str, list[str]]:
     return out
 
 
+ITEM_SETS = ("Tarot", "Planet", "Spectral", "Voucher", "Booster")
+_SET_SECTION = re.compile(r"(?:if|elseif)\s+_c\.set\s*==\s*'(\w+)'\s*then")
+_UI_BRANCH = re.compile(
+    r"_c\.name\s*==\s*(['\"])(.+?)\1((?:\s*or\s*_c\.name\s*==\s*['\"][^'\"]+['\"])*)"
+    r"\s*then\s+(?:desc_override\s*=\s*'(\w+)'\s*;\s*)?loc_vars\s*=\s*\{"
+)
+_SET_LOC_VARS = re.compile(r"(?<![\w.])loc_vars\s*=\s*\{")
+
+
+@dataclass(frozen=True)
+class UiLocVars:
+    """How ``generate_card_ui`` fills one item's text: ``exprs`` for its ``#n#``
+    values and, for packs, the description key (``desc_override``)."""
+
+    exprs: list[str]
+    desc: str | None = None
+
+
+def _exprs(body: str) -> list[str]:
+    return [p for p in _split_top_level(body) if p and not re.match(r"^\w+\s*=[^=]", p)]
+
+
+def parse_ui_loc_vars(common_events_lua: str) -> dict[str, UiLocVars]:
+    """``{internal item name or set name: UiLocVars}`` for consumables, vouchers and
+    packs, from ``generate_card_ui``'s per-set sections (other sections, e.g. the
+    unlock conditions shown for locked cards, are skipped).  A set's own entry
+    (e.g. ``"Planet"``) applies to every item of the set without one."""
+    start = common_events_lua.find("function generate_card_ui")
+    if start < 0:
+        return {}
+    end = common_events_lua.find("\nfunction ", start + 1)
+    src = common_events_lua[start : end if end > 0 else None]
+    sections = list(_SET_SECTION.finditer(src))
+    out: dict[str, UiLocVars] = {}
+    for sec, nxt in zip(sections, [*sections[1:], None], strict=True):
+        if sec.group(1) not in ITEM_SETS:
+            continue
+        body = src[sec.end() : nxt.start() if nxt else None]
+        branches = list(_UI_BRANCH.finditer(body))
+        for m in branches:
+            names = [m.group(2), *re.findall(r"['\"]([^'\"]+)['\"]", m.group(3))]
+            item = UiLocVars(_exprs(_balanced(body, m.end() - 1)), m.group(4))
+            for name in names:
+                out.setdefault(name, item)
+        first_name = branches[0].start() if branches else len(body)
+        default = _SET_LOC_VARS.search(body, 0, first_name)
+        if default:  # e.g. every planet: loc_vars = {G.GAME.hands[...].level, ...}
+            out.setdefault(sec.group(1), UiLocVars(_exprs(_balanced(body, default.end() - 1))))
+    return out
+
+
+_HAND = re.compile(r"\[\s*\"([^\"]+)\"\s*\]\s*=\s*\{\s*visible\s*=[^\n]*")
+
+
+def parse_hands(game_lua: str) -> dict[str, dict[str, int]]:
+    """``{hand: {"level", "l_mult", "l_chips", ...}}``: game.lua's starting hands table."""
+    return {
+        m.group(1): {k: int(v) for k, v in re.findall(r"\b(\w+)\s*=\s*(\d+)", m.group(0))}
+        for m in _HAND.finditer(game_lua)
+    }
+
+
 def parse_descriptions(loc_lua: str, prefix: str = "j_") -> dict[str, dict]:
     """``{key: {"name", "text": [lines]}}`` from localization/en-us.lua for keys starting
-    with ``prefix`` (``j_`` jokers, ``b_`` decks, ``bl_`` blinds)."""
+    with ``prefix`` (``j_`` jokers, ``b_`` decks, ``bl_`` blinds, ``c_`` consumables,
+    ``v_`` vouchers, ``p_`` packs)."""
     out = {}
     entry = re.compile(
         rf"\b({re.escape(prefix)}\w+)\s*=\s*\{{\s*name\s*=\s*\"([^\"]*)\"\s*,\s*text\s*=\s*\{{"
@@ -372,11 +439,16 @@ def _unresolved(text: list[str], values: list[Any]) -> int:
 
 
 _LOCALIZE_NAME = re.compile(r"localize\s*\{[^{}]*?key\s*=\s*'(\w+)'[^{}]*\}")
+# localize{type = 'name_text', set = 'Enhanced', key = _c.config.mod_conv} -> __name(...)
+_LOCALIZE_NAME_EXPR = re.compile(
+    r"localize\s*\{(?=[^{}]*type\s*=\s*'name_text')[^{}]*?key\s*=\s*([\w.]+)[^{}]*\}"
+)
 
 
 @dataclass
 class GameText:
-    """Joker, deck and blind names and effect text from one game archive (parsed once)."""
+    """Joker, deck, blind, consumable, voucher and pack names and effect text from one
+    game archive (parsed once)."""
 
     archive: Path
     descriptions: dict[str, dict] = field(default_factory=dict)
@@ -386,15 +458,23 @@ class GameText:
     blinds: dict[str, dict] = field(default_factory=dict)
     back_args: dict[str, list[str]] = field(default_factory=dict)
     loc_names: dict[str, str] = field(default_factory=dict)  # any key -> in-game name
+    items: dict[str, dict] = field(default_factory=dict)  # consumables, vouchers, packs
+    ui_loc_vars: dict[str, UiLocVars] = field(default_factory=dict)
+    hands: dict[str, dict[str, int]] = field(default_factory=dict)
 
     @classmethod
     def load(cls, archive: Path) -> GameText:
         with zipfile.ZipFile(archive) as z:
             loc = z.read("localization/en-us.lua").decode("utf-8", "replace")
             card = z.read("card.lua").decode("utf-8", "replace")
-            back = (
-                z.read("back.lua").decode("utf-8", "replace") if "back.lua" in z.namelist() else ""
-            )
+            files = set(z.namelist())
+
+            def read(name: str) -> str:
+                return z.read(name).decode("utf-8", "replace") if name in files else ""
+
+            back = read("back.lua")
+            common_events = read("functions/common_events.lua")
+            game = read("game.lua")
         misc = {
             kind: parse_misc_dict(loc, kind)
             for kind in ("suits_singular", "suits_plural", "poker_hands", "ranks")
@@ -409,6 +489,9 @@ class GameText:
             parse_descriptions(loc, "bl_"),
             parse_back_loc_args(back),
             loc_names,
+            {k: v for p in ("c_", "v_", "p_") for k, v in parse_descriptions(loc, p).items()},
+            parse_ui_loc_vars(common_events),
+            parse_hands(game),
         )
 
     def _localize(self, key: Any, kind: Any = None) -> Any:
@@ -467,3 +550,21 @@ class GameText:
     def blind(self, key: str) -> JokerText | None:
         """A blind's text; values that depend on the run (e.g. The Ox's hand) are unknown."""
         return self._text(self.blinds.get(key), [])
+
+    def item(self, key: str) -> JokerText | None:
+        """A consumable's, voucher's or pack's text with its starting values (planets at
+        level 1); values that depend on the run (e.g. The Fool's last card) are unknown."""
+        entry = catalog.centers().get(key, {})
+        ui = self.ui_loc_vars.get(entry.get("name", "")) or self.ui_loc_vars.get(
+            entry.get("set", "")
+        )
+        desc = self.items.get(ui.desc) if ui and ui.desc else self.items.get(key)
+        names = {
+            "_c": _Obj(config=_wrap(entry.get("config") or {}), name=entry.get("name")),
+            "G": _Obj(GAME=_Obj(probabilities=_Obj(normal=1), hands=_wrap(self.hands))),
+            "localize": self._localize,
+            "__name": lambda k: self.loc_names.get(k, catalog.name(k)),
+            "math": _Obj(floor=math.floor, ceil=math.ceil, max=max, min=min, abs=abs),
+        }  # fmt: skip
+        exprs = [_LOCALIZE_NAME_EXPR.sub(r"__name(\1)", e) for e in ui.exprs] if ui else []
+        return self._text(desc, self._run_all(exprs, names))

@@ -207,6 +207,9 @@
   "pos": {
    "x": 0,
    "y": 5
+  },
+  "config": {
+   "extra": 2
   }
  },
  "c_aura": {
@@ -215,7 +218,8 @@
   "pos": {
    "x": 4,
    "y": 4
-  }
+  },
+  "config": {}
  },
  "c_base": {
   "name": "Default Base",
@@ -227,7 +231,8 @@
   "pos": {
    "x": 9,
    "y": 3
-  }
+  },
+  "config": {}
  },
  "c_ceres": {
   "name": "Ceres",
@@ -235,6 +240,10 @@
   "pos": {
    "x": 8,
    "y": 2
+  },
+  "config": {
+   "hand_type": "Flush House",
+   "softlock": true
   }
  },
  "c_chariot": {
@@ -243,6 +252,10 @@
   "pos": {
    "x": 7,
    "y": 0
+  },
+  "config": {
+   "max_highlighted": 1,
+   "mod_conv": "m_steel"
   }
  },
  "c_cryptid": {
@@ -251,6 +264,10 @@
   "pos": {
    "x": 5,
    "y": 5
+  },
+  "config": {
+   "extra": 2,
+   "max_highlighted": 1
   }
  },
  "c_death": {
@@ -259,6 +276,11 @@
   "pos": {
    "x": 3,
    "y": 1
+  },
+  "config": {
+   "max_highlighted": 2,
+   "min_highlighted": 2,
+   "mod_conv": "card"
   }
  },
  "c_deja_vu": {
@@ -267,6 +289,10 @@
   "pos": {
    "x": 1,
    "y": 5
+  },
+  "config": {
+   "extra": "Red",
+   "max_highlighted": 1
   }
  },
  "c_devil": {
@@ -275,6 +301,10 @@
   "pos": {
    "x": 5,
    "y": 1
+  },
+  "config": {
+   "max_highlighted": 1,
+   "mod_conv": "m_gold"
   }
  },
  "c_earth": {
@@ -283,6 +313,9 @@
   "pos": {
    "x": 2,
    "y": 3
+  },
+  "config": {
+   "hand_type": "Full House"
   }
  },
  "c_ectoplasm": {
@@ -291,7 +324,8 @@
   "pos": {
    "x": 8,
    "y": 4
-  }
+  },
+  "config": {}
  },
  "c_emperor": {
   "name": "The Emperor",
@@ -299,6 +333,9 @@
   "pos": {
    "x": 4,
    "y": 0
+  },
+  "config": {
+   "tarots": 2
   }
  },
  "c_empress": {
@@ -307,6 +344,10 @@
   "pos": {
    "x": 3,
    "y": 0
+  },
+  "config": {
+   "max_highlighted": 2,
+   "mod_conv": "m_mult"
   }
  },
  "c_eris": {
@@ -315,6 +356,10 @@
   "pos": {
    "x": 3,
    "y": 2
+  },
+  "config": {
+   "hand_type": "Flush Five",
+   "softlock": true
   }
  },
  "c_familiar": {
@@ -323,6 +368,10 @@
   "pos": {
    "x": 0,
    "y": 4
+  },
+  "config": {
+   "extra": 3,
+   "remove_card": true
   }
  },
  "c_fool": {
@@ -331,7 +380,8 @@
   "pos": {
    "x": 0,
    "y": 0
-  }
+  },
+  "config": {}
  },
  "c_grim": {
   "name": "Grim",
@@ -339,6 +389,10 @@
   "pos": {
    "x": 1,
    "y": 4
+  },
+  "config": {
+   "extra": 2,
+   "remove_card": true
   }
  },
  "c_hanged_man": {
@@ -347,6 +401,10 @@
   "pos": {
    "x": 2,
    "y": 1
+  },
+  "config": {
+   "max_highlighted": 2,
+   "remove_card": true
   }
  },
  "c_heirophant": {
@@ -355,6 +413,10 @@
   "pos": {
    "x": 5,
    "y": 0
+  },
+  "config": {
+   "max_highlighted": 2,
+   "mod_conv": "m_bonus"
   }
  },
  "c_hermit": {
@@ -363,6 +425,9 @@
   "pos": {
    "x": 9,
    "y": 0
+  },
+  "config": {
+   "extra": 20
   }
  },
  "c_hex": {
@@ -371,6 +436,9 @@
   "pos": {
    "x": 2,
    "y": 5
+  },
+  "config": {
+   "extra": 2
   }
  },
  "c_high_priestess": {
@@ -379,6 +447,9 @@
   "pos": {
    "x": 2,
    "y": 0
+  },
+  "config": {
+   "planets": 2
   }
  },
  "c_immolate": {
@@ -387,6 +458,13 @@
   "pos": {
    "x": 9,
    "y": 4
+  },
+  "config": {
+   "extra": {
+    "destroy": 5,
+    "dollars": 20
+   },
+   "remove_card": true
   }
  },
  "c_incantation": {
@@ -395,6 +473,10 @@
   "pos": {
    "x": 2,
    "y": 4
+  },
+  "config": {
+   "extra": 4,
+   "remove_card": true
   }
  },
  "c_judgement": {
@@ -403,7 +485,8 @@
   "pos": {
    "x": 0,
    "y": 2
-  }
+  },
+  "config": {}
  },
  "c_jupiter": {
   "name": "Jupiter",
@@ -411,6 +494,9 @@
   "pos": {
    "x": 4,
    "y": 3
+  },
+  "config": {
+   "hand_type": "Flush"
   }
  },
  "c_justice": {
@@ -419,6 +505,10 @@
   "pos": {
    "x": 8,
    "y": 0
+  },
+  "config": {
+   "max_highlighted": 1,
+   "mod_conv": "m_glass"
   }
  },
  "c_lovers": {
@@ -427,6 +517,10 @@
   "pos": {
    "x": 6,
    "y": 0
+  },
+  "config": {
+   "max_highlighted": 1,
+   "mod_conv": "m_wild"
   }
  },
  "c_magician": {
@@ -435,6 +529,10 @@
   "pos": {
    "x": 1,
    "y": 0
+  },
+  "config": {
+   "max_highlighted": 2,
+   "mod_conv": "m_lucky"
   }
  },
  "c_mars": {
@@ -443,6 +541,9 @@
   "pos": {
    "x": 3,
    "y": 3
+  },
+  "config": {
+   "hand_type": "Four of a Kind"
   }
  },
  "c_medium": {
@@ -451,6 +552,10 @@
   "pos": {
    "x": 4,
    "y": 5
+  },
+  "config": {
+   "extra": "Purple",
+   "max_highlighted": 1
   }
  },
  "c_mercury": {
@@ -459,6 +564,9 @@
   "pos": {
    "x": 0,
    "y": 3
+  },
+  "config": {
+   "hand_type": "Pair"
   }
  },
  "c_moon": {
@@ -467,6 +575,10 @@
   "pos": {
    "x": 8,
    "y": 1
+  },
+  "config": {
+   "max_highlighted": 3,
+   "suit_conv": "Clubs"
   }
  },
  "c_neptune": {
@@ -475,6 +587,9 @@
   "pos": {
    "x": 7,
    "y": 3
+  },
+  "config": {
+   "hand_type": "Straight Flush"
   }
  },
  "c_ouija": {
@@ -483,7 +598,8 @@
   "pos": {
    "x": 7,
    "y": 4
-  }
+  },
+  "config": {}
  },
  "c_planet_x": {
   "name": "Planet X",
@@ -491,6 +607,10 @@
   "pos": {
    "x": 9,
    "y": 2
+  },
+  "config": {
+   "hand_type": "Five of a Kind",
+   "softlock": true
   }
  },
  "c_pluto": {
@@ -499,6 +619,9 @@
   "pos": {
    "x": 8,
    "y": 3
+  },
+  "config": {
+   "hand_type": "High Card"
   }
  },
  "c_saturn": {
@@ -507,6 +630,9 @@
   "pos": {
    "x": 5,
    "y": 3
+  },
+  "config": {
+   "hand_type": "Straight"
   }
  },
  "c_sigil": {
@@ -515,7 +641,8 @@
   "pos": {
    "x": 6,
    "y": 4
-  }
+  },
+  "config": {}
  },
  "c_soul": {
   "name": "The Soul",
@@ -523,7 +650,8 @@
   "pos": {
    "x": 2,
    "y": 2
-  }
+  },
+  "config": {}
  },
  "c_star": {
   "name": "The Star",
@@ -531,6 +659,10 @@
   "pos": {
    "x": 7,
    "y": 1
+  },
+  "config": {
+   "max_highlighted": 3,
+   "suit_conv": "Diamonds"
   }
  },
  "c_strength": {
@@ -539,6 +671,10 @@
   "pos": {
    "x": 1,
    "y": 1
+  },
+  "config": {
+   "max_highlighted": 2,
+   "mod_conv": "up_rank"
   }
  },
  "c_sun": {
@@ -547,6 +683,10 @@
   "pos": {
    "x": 9,
    "y": 1
+  },
+  "config": {
+   "max_highlighted": 3,
+   "suit_conv": "Hearts"
   }
  },
  "c_talisman": {
@@ -555,6 +695,10 @@
   "pos": {
    "x": 3,
    "y": 4
+  },
+  "config": {
+   "extra": "Gold",
+   "max_highlighted": 1
   }
  },
  "c_temperance": {
@@ -563,6 +707,9 @@
   "pos": {
    "x": 4,
    "y": 1
+  },
+  "config": {
+   "extra": 50
   }
  },
  "c_tower": {
@@ -571,6 +718,10 @@
   "pos": {
    "x": 6,
    "y": 1
+  },
+  "config": {
+   "max_highlighted": 1,
+   "mod_conv": "m_stone"
   }
  },
  "c_trance": {
@@ -579,6 +730,10 @@
   "pos": {
    "x": 3,
    "y": 5
+  },
+  "config": {
+   "extra": "Blue",
+   "max_highlighted": 1
   }
  },
  "c_uranus": {
@@ -587,6 +742,9 @@
   "pos": {
    "x": 6,
    "y": 3
+  },
+  "config": {
+   "hand_type": "Two Pair"
   }
  },
  "c_venus": {
@@ -595,6 +753,9 @@
   "pos": {
    "x": 1,
    "y": 3
+  },
+  "config": {
+   "hand_type": "Three of a Kind"
   }
  },
  "c_wheel_of_fortune": {
@@ -603,6 +764,9 @@
   "pos": {
    "x": 0,
    "y": 1
+  },
+  "config": {
+   "extra": 4
   }
  },
  "c_world": {
@@ -611,6 +775,10 @@
   "pos": {
    "x": 1,
    "y": 2
+  },
+  "config": {
+   "max_highlighted": 3,
+   "suit_conv": "Spades"
   }
  },
  "c_wraith": {
@@ -619,7 +787,8 @@
   "pos": {
    "x": 5,
    "y": 4
-  }
+  },
+  "config": {}
  },
  "e_base": {
   "name": "Base",
@@ -3022,6 +3191,10 @@
   "pos": {
    "x": 0,
    "y": 2
+  },
+  "config": {
+   "choose": 1,
+   "extra": 5
   }
  },
  "p_arcana_jumbo_2": {
@@ -3030,6 +3203,10 @@
   "pos": {
    "x": 1,
    "y": 2
+  },
+  "config": {
+   "choose": 1,
+   "extra": 5
   }
  },
  "p_arcana_mega_1": {
@@ -3038,6 +3215,10 @@
   "pos": {
    "x": 2,
    "y": 2
+  },
+  "config": {
+   "choose": 2,
+   "extra": 5
   }
  },
  "p_arcana_mega_2": {
@@ -3046,6 +3227,10 @@
   "pos": {
    "x": 3,
    "y": 2
+  },
+  "config": {
+   "choose": 2,
+   "extra": 5
   }
  },
  "p_arcana_normal_1": {
@@ -3054,6 +3239,10 @@
   "pos": {
    "x": 0,
    "y": 0
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_arcana_normal_2": {
@@ -3062,6 +3251,10 @@
   "pos": {
    "x": 1,
    "y": 0
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_arcana_normal_3": {
@@ -3070,6 +3263,10 @@
   "pos": {
    "x": 2,
    "y": 0
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_arcana_normal_4": {
@@ -3078,6 +3275,10 @@
   "pos": {
    "x": 3,
    "y": 0
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_buffoon_jumbo_1": {
@@ -3086,6 +3287,10 @@
   "pos": {
    "x": 2,
    "y": 8
+  },
+  "config": {
+   "choose": 1,
+   "extra": 4
   }
  },
  "p_buffoon_mega_1": {
@@ -3094,6 +3299,10 @@
   "pos": {
    "x": 3,
    "y": 8
+  },
+  "config": {
+   "choose": 2,
+   "extra": 4
   }
  },
  "p_buffoon_normal_1": {
@@ -3102,6 +3311,10 @@
   "pos": {
    "x": 0,
    "y": 8
+  },
+  "config": {
+   "choose": 1,
+   "extra": 2
   }
  },
  "p_buffoon_normal_2": {
@@ -3110,6 +3323,10 @@
   "pos": {
    "x": 1,
    "y": 8
+  },
+  "config": {
+   "choose": 1,
+   "extra": 2
   }
  },
  "p_celestial_jumbo_1": {
@@ -3118,6 +3335,10 @@
   "pos": {
    "x": 0,
    "y": 3
+  },
+  "config": {
+   "choose": 1,
+   "extra": 5
   }
  },
  "p_celestial_jumbo_2": {
@@ -3126,6 +3347,10 @@
   "pos": {
    "x": 1,
    "y": 3
+  },
+  "config": {
+   "choose": 1,
+   "extra": 5
   }
  },
  "p_celestial_mega_1": {
@@ -3134,6 +3359,10 @@
   "pos": {
    "x": 2,
    "y": 3
+  },
+  "config": {
+   "choose": 2,
+   "extra": 5
   }
  },
  "p_celestial_mega_2": {
@@ -3142,6 +3371,10 @@
   "pos": {
    "x": 3,
    "y": 3
+  },
+  "config": {
+   "choose": 2,
+   "extra": 5
   }
  },
  "p_celestial_normal_1": {
@@ -3150,6 +3383,10 @@
   "pos": {
    "x": 0,
    "y": 1
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_celestial_normal_2": {
@@ -3158,6 +3395,10 @@
   "pos": {
    "x": 1,
    "y": 1
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_celestial_normal_3": {
@@ -3166,6 +3407,10 @@
   "pos": {
    "x": 2,
    "y": 1
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_celestial_normal_4": {
@@ -3174,6 +3419,10 @@
   "pos": {
    "x": 3,
    "y": 1
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_spectral_jumbo_1": {
@@ -3182,6 +3431,10 @@
   "pos": {
    "x": 2,
    "y": 4
+  },
+  "config": {
+   "choose": 1,
+   "extra": 4
   }
  },
  "p_spectral_mega_1": {
@@ -3190,6 +3443,10 @@
   "pos": {
    "x": 3,
    "y": 4
+  },
+  "config": {
+   "choose": 2,
+   "extra": 4
   }
  },
  "p_spectral_normal_1": {
@@ -3198,6 +3455,10 @@
   "pos": {
    "x": 0,
    "y": 4
+  },
+  "config": {
+   "choose": 1,
+   "extra": 2
   }
  },
  "p_spectral_normal_2": {
@@ -3206,6 +3467,10 @@
   "pos": {
    "x": 1,
    "y": 4
+  },
+  "config": {
+   "choose": 1,
+   "extra": 2
   }
  },
  "p_standard_jumbo_1": {
@@ -3214,6 +3479,10 @@
   "pos": {
    "x": 0,
    "y": 7
+  },
+  "config": {
+   "choose": 1,
+   "extra": 5
   }
  },
  "p_standard_jumbo_2": {
@@ -3222,6 +3491,10 @@
   "pos": {
    "x": 1,
    "y": 7
+  },
+  "config": {
+   "choose": 1,
+   "extra": 5
   }
  },
  "p_standard_mega_1": {
@@ -3230,6 +3503,10 @@
   "pos": {
    "x": 2,
    "y": 7
+  },
+  "config": {
+   "choose": 2,
+   "extra": 5
   }
  },
  "p_standard_mega_2": {
@@ -3238,6 +3515,10 @@
   "pos": {
    "x": 3,
    "y": 7
+  },
+  "config": {
+   "choose": 2,
+   "extra": 5
   }
  },
  "p_standard_normal_1": {
@@ -3246,6 +3527,10 @@
   "pos": {
    "x": 0,
    "y": 6
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_standard_normal_2": {
@@ -3254,6 +3539,10 @@
   "pos": {
    "x": 1,
    "y": 6
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_standard_normal_3": {
@@ -3262,6 +3551,10 @@
   "pos": {
    "x": 2,
    "y": 6
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "p_standard_normal_4": {
@@ -3270,6 +3563,10 @@
   "pos": {
    "x": 3,
    "y": 6
+  },
+  "config": {
+   "choose": 1,
+   "extra": 3
   }
  },
  "v_antimatter": {
@@ -3278,6 +3575,9 @@
   "pos": {
    "x": 7,
    "y": 1
+  },
+  "config": {
+   "extra": 15
   }
  },
  "v_blank": {
@@ -3286,6 +3586,9 @@
   "pos": {
    "x": 7,
    "y": 0
+  },
+  "config": {
+   "extra": 5
   }
  },
  "v_clearance_sale": {
@@ -3294,6 +3597,9 @@
   "pos": {
    "x": 3,
    "y": 0
+  },
+  "config": {
+   "extra": 25
   }
  },
  "v_crystal_ball": {
@@ -3302,6 +3608,9 @@
   "pos": {
    "x": 2,
    "y": 2
+  },
+  "config": {
+   "extra": 3
   }
  },
  "v_directors_cut": {
@@ -3310,6 +3619,9 @@
   "pos": {
    "x": 6,
    "y": 2
+  },
+  "config": {
+   "extra": 10
   }
  },
  "v_glow_up": {
@@ -3318,6 +3630,9 @@
   "pos": {
    "x": 4,
    "y": 1
+  },
+  "config": {
+   "extra": 4
   }
  },
  "v_grabber": {
@@ -3326,6 +3641,9 @@
   "pos": {
    "x": 5,
    "y": 0
+  },
+  "config": {
+   "extra": 1
   }
  },
  "v_hieroglyph": {
@@ -3334,6 +3652,9 @@
   "pos": {
    "x": 5,
    "y": 2
+  },
+  "config": {
+   "extra": 1
   }
  },
  "v_hone": {
@@ -3342,6 +3663,9 @@
   "pos": {
    "x": 4,
    "y": 0
+  },
+  "config": {
+   "extra": 2
   }
  },
  "v_illusion": {
@@ -3350,6 +3674,9 @@
   "pos": {
    "x": 4,
    "y": 3
+  },
+  "config": {
+   "extra": 4
   }
  },
  "v_liquidation": {
@@ -3358,6 +3685,9 @@
   "pos": {
    "x": 3,
    "y": 1
+  },
+  "config": {
+   "extra": 50
   }
  },
  "v_magic_trick": {
@@ -3366,6 +3696,9 @@
   "pos": {
    "x": 4,
    "y": 2
+  },
+  "config": {
+   "extra": 4
   }
  },
  "v_money_tree": {
@@ -3374,6 +3707,9 @@
   "pos": {
    "x": 1,
    "y": 3
+  },
+  "config": {
+   "extra": 100
   }
  },
  "v_nacho_tong": {
@@ -3382,6 +3718,9 @@
   "pos": {
    "x": 5,
    "y": 1
+  },
+  "config": {
+   "extra": 1
   }
  },
  "v_observatory": {
@@ -3390,6 +3729,9 @@
   "pos": {
    "x": 3,
    "y": 3
+  },
+  "config": {
+   "extra": 1.5
   }
  },
  "v_omen_globe": {
@@ -3398,6 +3740,9 @@
   "pos": {
    "x": 2,
    "y": 3
+  },
+  "config": {
+   "extra": 4
   }
  },
  "v_overstock_norm": {
@@ -3406,7 +3751,8 @@
   "pos": {
    "x": 0,
    "y": 0
-  }
+  },
+  "config": {}
  },
  "v_overstock_plus": {
   "name": "Overstock Plus",
@@ -3414,7 +3760,8 @@
   "pos": {
    "x": 0,
    "y": 1
-  }
+  },
+  "config": {}
  },
  "v_paint_brush": {
   "name": "Paint Brush",
@@ -3422,6 +3769,9 @@
   "pos": {
    "x": 7,
    "y": 2
+  },
+  "config": {
+   "extra": 1
   }
  },
  "v_palette": {
@@ -3430,6 +3780,9 @@
   "pos": {
    "x": 7,
    "y": 3
+  },
+  "config": {
+   "extra": 1
   }
  },
  "v_petroglyph": {
@@ -3438,6 +3791,9 @@
   "pos": {
    "x": 5,
    "y": 3
+  },
+  "config": {
+   "extra": 1
   }
  },
  "v_planet_merchant": {
@@ -3446,6 +3802,10 @@
   "pos": {
    "x": 2,
    "y": 0
+  },
+  "config": {
+   "extra": 2.4,
+   "extra_disp": 2
   }
  },
  "v_planet_tycoon": {
@@ -3454,6 +3814,10 @@
   "pos": {
    "x": 2,
    "y": 1
+  },
+  "config": {
+   "extra": 8,
+   "extra_disp": 4
   }
  },
  "v_recyclomancy": {
@@ -3462,6 +3826,9 @@
   "pos": {
    "x": 6,
    "y": 1
+  },
+  "config": {
+   "extra": 1
   }
  },
  "v_reroll_glut": {
@@ -3470,6 +3837,9 @@
   "pos": {
    "x": 0,
    "y": 3
+  },
+  "config": {
+   "extra": 2
   }
  },
  "v_reroll_surplus": {
@@ -3478,6 +3848,9 @@
   "pos": {
    "x": 0,
    "y": 2
+  },
+  "config": {
+   "extra": 2
   }
  },
  "v_retcon": {
@@ -3486,6 +3859,9 @@
   "pos": {
    "x": 6,
    "y": 3
+  },
+  "config": {
+   "extra": 10
   }
  },
  "v_seed_money": {
@@ -3494,6 +3870,9 @@
   "pos": {
    "x": 1,
    "y": 2
+  },
+  "config": {
+   "extra": 50
   }
  },
  "v_tarot_merchant": {
@@ -3502,6 +3881,10 @@
   "pos": {
    "x": 1,
    "y": 0
+  },
+  "config": {
+   "extra": 2.4,
+   "extra_disp": 2
   }
  },
  "v_tarot_tycoon": {
@@ -3510,6 +3893,10 @@
   "pos": {
    "x": 1,
    "y": 1
+  },
+  "config": {
+   "extra": 8,
+   "extra_disp": 4
   }
  },
  "v_telescope": {
@@ -3518,6 +3905,9 @@
   "pos": {
    "x": 3,
    "y": 2
+  },
+  "config": {
+   "extra": 3
   }
  },
  "v_wasteful": {
@@ -3526,6 +3916,9 @@
   "pos": {
    "x": 6,
    "y": 0
+  },
+  "config": {
+   "extra": 1
   }
  }
 }

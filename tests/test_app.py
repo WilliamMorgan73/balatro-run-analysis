@@ -411,26 +411,26 @@ def test_chart_description_shown(runs_dir):
 
 
 @pytest.mark.parametrize("pretty", [True, False])
-def test_explorer_tables_show_icons_not_lists(runs_dir, fake_game, pretty):
-    """Held jokers/consumables: an icon strip plus names, never raw list cells."""
+def test_explorer_item_icons_open_details(runs_dir, fake_game, pretty):
+    """Shop decisions and Blinds played are HTML tables whose item icons open the
+    same modals as elsewhere; the episode finder keeps its sortable icon table."""
     at = _run(runs_dir, fake_game, tab="Episode explorer")
     if not pretty:
         at.toggle(key="pretty").set_value(False).run()
     assert not at.exception
-    frames = [d.value for d in at.main.dataframe]
-    episodes, shop = frames[0], frames[1]  # episode finder, then the shop decisions
-    for table, icons in (
-        (shop, "Jokers before icons" if pretty else "jokers_before_icons"),
-        (episodes, "Final jokers icons" if pretty else "final_jokers_icons"),
-    ):
-        assert table[icons].str.startswith("data:image/png;base64,", na=True).all()
-        assert table[icons].notna().any()  # j_joker has art in the fake install
-    for f in frames:
-        assert not f.map(lambda v: isinstance(v, list)).any().any()
-    blinds = frames[-1]  # Blinds played: held entering each blind, with icons
-    held, icons = ("Jokers", "Jokers icons") if pretty else ("jokers", "jokers_icons")
-    assert {held, icons} <= set(blinds.columns)
-    assert blinds[icons].notna().any()
+    (episodes,) = [d.value for d in at.main.dataframe]  # shop/blinds aren't dataframes
+    icons = "Final jokers icons" if pretty else "final_jokers_icons"
+    assert episodes[icons].str.startswith("data:image/png;base64,", na=True).all()
+    assert episodes[icons].notna().any()
+
+    html = [h.proto.body for h in at.get("html")]
+    shop = next(h for h in html if 'data-dialog="ex-shop-' in h)
+    blinds = next(h for h in html if 'data-dialog="ex-blind-' in h)
+    for table in (shop, blinds):
+        assert 'data-dialog="ex-' in table and '<dialog class="dt-dialog"' in table
+        assert "['j_" not in table  # never raw key lists
+    assert 'id="ex-shop-j_joker"' in shop  # the joker's collection modal
+    assert ("Buy card 1" if pretty else "buy_card_0") in shop
 
 
 # --- Finding episodes and runs (#17) ------------------------------------------

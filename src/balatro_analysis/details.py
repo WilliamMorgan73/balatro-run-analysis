@@ -6,7 +6,8 @@ click (or Enter/Space) and closes it on a backdrop click. Esc and the close butt
 close it without script. Ids are prefixed per grid so grids on one page don't clash.
 
 Joker dialogs are built in ``collection`` (from ``JokerCard``); this module holds
-the shared pieces plus the deck and boss blind dialogs.
+the shared pieces plus the deck, boss blind and item (consumable, voucher, pack)
+dialogs, and ``item_table_html``: a table whose item icons open those dialogs.
 """
 
 from __future__ import annotations
@@ -14,14 +15,14 @@ from __future__ import annotations
 import html
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 import pandas as pd
 
 from balatro_analysis import catalog
-from balatro_analysis.game_text import GameText
-from balatro_analysis.names import Names
+from balatro_analysis.game_text import COLOURS, GameText, JokerText
+from balatro_analysis.names import Names, split_items
 
 MODAL_CSS = """
 <style>
@@ -74,6 +75,19 @@ dialog.dt-dialog::backdrop{background:rgba(10,16,20,.6)}
 .dt-jokers figure{margin:0;display:flex;flex-direction:column;align-items:center;gap:2px;
   font-size:12px;width:86px;text-align:center}
 .dt-jokers img{width:71px;height:95px;image-rendering:pixelated}
+.dt-scroll{max-height:520px;overflow:auto;border:1px solid rgba(128,128,128,.25);
+  border-radius:8px}
+.dt-items{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+.dt-items th{text-align:left;font-weight:600;opacity:.75;padding:6px 8px;white-space:nowrap;
+  border-bottom:1px solid rgba(128,128,128,.35)}
+.dt-items td{padding:4px 8px;border-bottom:1px solid rgba(128,128,128,.15);vertical-align:middle;
+  white-space:nowrap}
+.dt-items .dt-num{text-align:right}
+.dt-strip{display:flex;gap:4px;flex-wrap:nowrap;align-items:center}
+.dt-strip .dt-tile img{width:36px;height:48px;image-rendering:pixelated;display:block}
+.dt-strip .dt-tile:hover{transform:translateY(-2px)}
+.dt-chipname{display:inline-block;border-radius:6px;padding:2px 6px;font-size:12.5px;
+  font-weight:700;background:rgba(128,128,128,.18)}
 </style>
 """
 
@@ -390,3 +404,107 @@ def blind_grid_html(blinds: list[BlindInfo], names: Names, prefix: str = "boss")
         [blind_tile(b, names, i) for b, i in zip(blinds, ids, strict=True)],
         [blind_dialog(b, names, i) for b, i in zip(blinds, ids, strict=True)],
     )
+
+
+# ---------------------------------------------------------------------------
+# Consumables, vouchers and packs, and tables whose item icons open dialogs
+# ---------------------------------------------------------------------------
+
+SET_TAGS = {
+    "Tarot": ("Tarot", COLOURS["tarot"]),
+    "Planet": ("Planet", COLOURS["planet"]),
+    "Spectral": ("Spectral", COLOURS["spectral"]),
+    "Voucher": ("Voucher", COLOURS["voucher"]),
+    "Booster": ("Booster pack", COLOURS["booster"]),
+}
+
+
+def item_dialog(
+    key: str,
+    did: str,
+    names: Names,
+    text: JokerText | None,
+    icon: str | None,
+    stats: Iterable[tuple[str, str]] = (),
+) -> str:
+    """The modal for a consumable, voucher or pack: art, effect text (starting
+    values; "?" where it depends on the run) and how often the runs used it."""
+    title = names.item(key)
+    body = desc_html(text.lines if text else None, "Effect text needs the game files")
+    stats = list(stats)
+    if stats:
+        body += section("In the selected runs") + stats_html(stats)
+    entry = catalog.centers().get(key, {})
+    label, colour = SET_TAGS.get(entry.get("set", ""), (entry.get("set", ""), "#708b91"))
+    tag = f'<span class="dt-tag" style="background:{colour}">{html.escape(label)}</span>'
+    sub = key if names.pretty else catalog.name(key)
+    return dialog_html(did, title, sub, art_html(icon, title, 142, 190), body, tag if label else "")
+
+
+def _cell_text(v) -> tuple[str, bool]:
+    """(escaped text, is numeric) for one plain table cell."""
+    if v is None or (pd.api.types.is_float(v) and math.isnan(v)):
+        return "", False
+    if pd.api.types.is_bool(v):  # also numpy bools, as pandas hands them out
+        return ("✓" if v else "✗"), False
+    if pd.api.types.is_number(v):
+        return (str(int(v)) if float(v).is_integer() else f"{float(v):g}"), True
+    return html.escape(str(v)), False
+
+
+def item_table_html(
+    df: pd.DataFrame,
+    item_cols: list[str],
+    names: Names,
+    prefix: str,
+    dialog: Callable[[str, str], str],
+    icon: Callable[[str], str | None],
+    keys: dict[str, str] | None = None,
+) -> str:
+    """``df`` as an HTML table whose ``item_cols`` (an item key, or a list of them)
+    show clickable icons, or name chips without art, that open each item's dialog
+    (``dialog(key, dialog_id)``, one per item per table).  Other columns follow the
+    naming mode like ``Names.frame``."""
+    items = [c for c in item_cols if c in df]
+    plain = names.frame(df.drop(columns=items), keys, rename=False)
+    dialogs: dict[str, str] = {}
+
+    def tile(key: str) -> str:
+        did = dialog_id(prefix, key)
+        if key not in dialogs:
+            dialogs[key] = dialog(key, did)
+        name = names.item(key)
+        uri = icon(key)
+        inner = (
+            f'<img src="{uri}" alt="{html.escape(name)}">'
+            if uri
+            else f'<span class="dt-chipname">{html.escape(name)}</span>'
+        )
+        return tile_html(did, inner, name)
+
+    numeric = {  # right-aligned, header included
+        c
+        for c in plain
+        if pd.api.types.is_numeric_dtype(plain[c]) and not pd.api.types.is_bool_dtype(plain[c])
+    }
+    head = "".join(
+        f"<th{' class=dt-num' if c in numeric else ''}>{html.escape(names.column(c))}</th>"
+        for c in df.columns
+    )
+    rows = []
+    for i in range(len(df)):
+        cells = []
+        for c in df.columns:
+            if c in items:
+                tiles = "".join(tile(k) for k in split_items(df[c].iloc[i]))
+                cells.append(f'<td><div class="dt-strip">{tiles}</div></td>')
+            else:
+                text, is_number = _cell_text(plain[c].iloc[i])
+                num = is_number or c in numeric
+                cells.append(f'<td class="dt-num">{text}</td>' if num else f"<td>{text}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    table = (
+        f'<div class="dt-scroll"><table class="dt-items"><tr>{head}</tr>{"".join(rows)}'
+        "</table></div>"
+    )
+    return MODAL_CSS + table + "".join(dialogs.values()) + MODAL_JS

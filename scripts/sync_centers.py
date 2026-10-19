@@ -2,8 +2,8 @@
 
 Keeps only what the dashboard needs: display name and set for every center
 (jokers, decks, packs, vouchers, consumables, enhancements, ...), sprite
-positions for jokers, decks, consumables, vouchers and packs, deck configs, and blind names, chip positions,
-colours and rewards (no game art).
+positions and starting configs for jokers, decks, consumables, vouchers and
+packs, and blind names, chip positions, colours and rewards (no game art).
 
     uv run python scripts/sync_centers.py [path/to/jackdaw/engine/data]
 """
@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SRC = ROOT.parent / "jackdaw-balatro" / "jackdaw" / "engine" / "data"
 OUT = ROOT / "src" / "balatro_analysis" / "data"
 SPRITE_SETS = {"Joker", "Back", "Tarot", "Planet", "Spectral", "Voucher", "Booster"}
+ITEM_SETS = {"Tarot", "Planet", "Spectral", "Voucher", "Booster"}
 
 
 def main() -> None:
@@ -43,6 +44,9 @@ def main() -> None:
         if c["set"] == "Back":
             # Fills the deck text's #n# values (back.lua's loc_args)
             entry.update(order=c.get("order"), config=c.get("config") or {})
+        if c["set"] in ITEM_SETS:
+            # Fills consumable/voucher/pack text's #n# values (generate_card_ui's loc_vars)
+            entry.update(config=c.get("config") or {})
         centers[key] = entry
 
     blinds = {}

@@ -83,6 +83,32 @@ def test_game_text(fake_game):
     assert gt.joker("j_blueprint") is None  # not in the fake file
 
 
+def test_item_text(fake_game):
+    """Consumables, vouchers and packs: generate_card_ui's values, planets at level 1."""
+    gt = GameText.load(fake_game / "Balatro.exe")
+    assert _text(gt.item("c_hermit").lines) == "Doubles money / (Max of $20)"  # not the unlock
+    assert _text(gt.item("c_magician").lines) == "Enhances 2 selected / cards to Lucky Cards"
+    assert _text(gt.item("p_arcana_normal_1").lines) == "Choose 1 of up to / 3 Tarot cards"
+    mercury = gt.item("c_mercury")  # the Planet set's own loc_vars
+    assert _text(mercury.lines) == "(lvl.1) Level up / Pair / +1 Mult and / +15 chips"
+    assert mercury.unresolved == 0
+    assert gt.item("c_fool") is None  # not in the fake file
+    assert gt.item("v_telescope").lines == ["Celestial packs"]  # no #n# values
+
+
+def test_parse_ui_loc_vars_skips_other_sections():
+    from conftest import FAKE_COMMON_EVENTS
+
+    from balatro_analysis.game_text import parse_ui_loc_vars
+
+    ui = parse_ui_loc_vars(FAKE_COMMON_EVENTS)
+    assert ui["The Hermit"].exprs == ["_c.config.extra"]  # Tarot section, not the unlock
+    assert ui["The Empress"] == ui["The Magician"]  # "or" branches share loc_vars
+    assert ui["Arcana Pack"].desc == "p_arcana_normal"
+    assert len(ui["Planet"].exprs) == 4  # colours = {...} left out
+    assert parse_ui_loc_vars("no such function") == {}
+
+
 # --- stats and cards --------------------------------------------------------
 
 
