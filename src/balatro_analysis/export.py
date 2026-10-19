@@ -225,10 +225,16 @@ def render(fig: go.Figure, fmt: str) -> bytes:
     return _cache[key]
 
 
-def charts_zip(figs: dict[str, go.Figure], fmts: list[str]) -> bytes:
-    """ZIP of ``charts/<slug>.<fmt>``; renders in one batch (one browser start)."""
+def charts_zip(
+    figs: dict[str, go.Figure], fmts: list[str], descriptions: dict[str, str] | None = None
+) -> bytes:
+    """ZIP of ``charts/<slug>.<fmt>``; renders in one batch (one browser start).
+    With ``descriptions`` (slug -> text) it adds ``charts/README.md`` listing each
+    chart's files and what it shows, ready to use as figure captions."""
     buf = io.BytesIO()
     with tempfile.TemporaryDirectory() as tmp, zipfile.ZipFile(buf, "w") as z:
+        if descriptions:
+            z.writestr("charts/README.md", _charts_readme(figs, fmts, descriptions))
         for fmt in fmts:
             paths = [Path(tmp) / f"{s}.{fmt}" for s in figs]
             pio.write_images(
@@ -240,3 +246,13 @@ def charts_zip(figs: dict[str, go.Figure], fmts: list[str]) -> bytes:
             for p in paths:
                 z.write(p, f"charts/{p.name}")
     return buf.getvalue()
+
+
+def _charts_readme(
+    figs: dict[str, go.Figure], fmts: list[str], descriptions: dict[str, str]
+) -> str:
+    lines = ["# Charts", ""]
+    for slug in figs:
+        files = ", ".join(f"`{slug}.{fmt}`" for fmt in fmts)
+        lines += [f"## {slug}", "", files, "", descriptions.get(slug, ""), ""]
+    return "\n".join(lines)

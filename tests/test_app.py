@@ -384,3 +384,27 @@ def test_app_groups_mode(group_runs_dir):
 def test_app_no_groups_toggle_without_groups(runs_dir):
     at = _run(runs_dir)
     assert not [r for r in at.radio if r.label == "Compare"]
+
+
+def test_every_chart_has_a_description():
+    """chart() takes a required description; check every call passes one, even in
+    branches the rendering tests don't reach."""
+    import ast
+
+    calls = [
+        n
+        for n in ast.walk(ast.parse(Path(APP).read_text()))
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "chart"
+    ]
+    assert len(calls) > 30
+    for c in calls:
+        desc = c.args[2] if len(c.args) > 2 else None
+        assert desc is not None, f"chart() at app.py:{c.lineno} has no description"
+        if isinstance(desc, ast.Constant):
+            assert desc.value.strip(), f"empty description at app.py:{c.lineno}"
+
+
+def test_chart_description_shown(runs_dir):
+    at = _run(runs_dir, tab="Overview")
+    assert not at.exception
+    assert any("Share of episodes that ended at each ante" in c.value for c in at.caption)

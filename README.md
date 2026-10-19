@@ -76,7 +76,9 @@ Sidebar → **Export**, always for the current run/episode/deck/stake selection:
   `mean [95% CI]` cells, ready for `\input`. They need `\usepackage{booktabs,graphicx}`;
   wide tables are scaled to `\linewidth`. Captions and `tab:<name>` labels are included.
 - **All charts (ZIP)**: every chart currently shown, as PNG (3200x1800) and/or SVG, in a
-  light theme for slides/LaTeX. Each chart also has its own **⬇ Export chart** button.
+  light theme for slides/LaTeX, plus `charts/README.md` with each chart's description (the
+  caption shown under it in the dashboard), ready to adapt into figure captions. Each chart
+  also has its own **⬇ Export chart** button.
 
 Chart rendering uses kaleido with your local Chrome/Chromium. If none is found the chart
 buttons say so; `uv run kaleido_get_chrome` downloads one.

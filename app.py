@@ -123,6 +123,12 @@ def need(df, what: str, logs_missing: bool = False) -> bool:
 
 
 CHARTS: dict[str, object] = {}
+CHART_DESCRIPTIONS: dict[str, str] = {}  # same keys as CHARTS
+INTEREST_EFFICIENCY = (
+    "Interest actually paid at cash-out as a share of the most the interest cap allows, by "
+    "ante (exact, from the cash-out breakdown). 100% means the agent always held enough money "
+    "to hit the cap."
+)
 
 
 LOG_VERSIONS = {
@@ -145,11 +151,14 @@ def need_new(df, what: str, version: int = 2) -> bool:
     return True
 
 
-def chart(fig, name: str) -> None:
-    """Show a figure, register it for 'download all', and offer PNG/SVG of it."""
+def chart(fig, name: str, description: str) -> None:
+    """Show a figure and what it shows, register both for 'download all', and
+    offer PNG/SVG of it."""
     key = export.slug(name)
     CHARTS[key] = fig
+    CHART_DESCRIPTIONS[key] = description
     st.plotly_chart(fig, width="stretch", key=f"chart_{key}")
+    st.caption(description)
     with st.popover("⬇ Export chart"):
         if problem := chart_export_problem():
             st.error(f"Chart export unavailable: {problem}")
@@ -498,16 +507,20 @@ with tabs[0]:
                 fig = plots.eval_curve(ecurve, emetric, names)
                 if by_group:
                     fig.update_layout(legend_title_text="Group")
-                chart(fig, f"eval {emetric}")
-                st.caption(
-                    "Greedy episodes on the same eval seeds after each block of training ("
+                chart(
+                    fig,
+                    f"eval {emetric}",
+                    f"Eval {emetric} against the number of training episodes so far: each "
+                    "point is one eval round of greedy episodes (no exploration) on the same "
+                    "fixed seeds, so rounds are directly comparable and a learning agent's line "
+                    "should rise. Band: 95% CI ("
                     + (
                         "each group's runs averaged, Student-t CI across runs"
                         if by_group
-                        else "bootstrap CI for ante, Wilson for win rate"
+                        else "bootstrap for ante, Wilson for win rate"
                     )
                     + "). To compare runs game by game on one round, set **Episodes** to "
-                    "*Evaluation* in the sidebar."
+                    "*Evaluation* in the sidebar.",
                 )
         if not eval_mode:
             if by_group:
@@ -523,9 +536,23 @@ with tabs[0]:
                 fig = plots.learning_curve(curve, metric, names, band)
                 if by_group:
                     fig.update_layout(legend_title_text="Group")
-                chart(fig, f"learning curve {metric}")
+                chart(
+                    fig,
+                    f"learning curve {metric}",
+                    f"Training {metric} as a rolling average over the last {window} episodes "
+                    "(the smoothing window is in the sidebar), one line per "
+                    + ("group" if by_group else "run")
+                    + f". Band: {band_help}. A flat line means no learning; a random agent "
+                    "should stay flat.",
+                )
         if any(len(r.episodes) for r in runs):
-            chart(plots.ante_distribution(metrics.ante_distribution(runs), names), "ante reached")
+            chart(
+                plots.ante_distribution(metrics.ante_distribution(runs), names),
+                "ante reached",
+                "Share of episodes that ended at each ante (the highest ante reached), one bar "
+                "per run. Bars further right mean the agent gets further; winning means "
+                "clearing ante 8.",
+            )
         with st.expander("Run configs"):
             for r in runs:
                 st.markdown(f"**{r.name}**")
@@ -539,7 +566,13 @@ with tabs[1]:
             st.caption("Click a deck for its effect and results.")
             decks_played = sorted(deck_table["deck"].unique())
             modal_html(details.deck_grid_html(deck_infos(decks_played), names))
-            chart(plots.by_deck(deck_table, names), "mean ante by deck")
+            chart(
+                plots.by_deck(deck_table, names),
+                "mean ante by deck",
+                "Mean ante reached for each deck and stake played, one bar per run. Higher "
+                "stakes add harder rules, so compare decks within a stake; hover for the "
+                "episode count, best ante and win rate.",
+            )
             table(
                 deck_table[
                     ["run", "deck", "stake", "episodes", "mean_ante", "max_ante", "win_rate"]
@@ -609,13 +642,28 @@ with tabs[2]:
             if sub[0].open:
                 fam = actions.family_share(runs)
                 if need(fam, "shop actions"):
-                    chart(plots.family_share(fam, names), "action family share")
+                    chart(
+                        plots.family_share(fam, names),
+                        "action family share",
+                        "Share of all shop decisions by kind (buy card, buy pack, sell joker, "
+                        "reroll, leave shop, ...), one bar per run. Each bar sums to 100%.",
+                    )
                 freq = metrics.action_frequency(runs)
                 if need(freq, "shop actions"):
-                    chart(plots.action_frequency(freq, names), "action share")
+                    chart(
+                        plots.action_frequency(freq, names),
+                        "action share",
+                        "Share of shop decisions that chose each of the 17 shop actions (slot "
+                        "numbers count from 0, left to right), one bar per run.",
+                    )
                 visits = actions.decisions_per_visit(runs)
                 if need(visits, "shop visits", no_steps):
-                    chart(plots.decisions_per_visit(visits, names), "decisions per visit")
+                    chart(
+                        plots.decisions_per_visit(visits, names),
+                        "decisions per visit",
+                        "How many decisions the agent made in one shop visit, including the "
+                        "final leave-shop. 1 means it left at once without buying anything.",
+                    )
 
         with sub[1]:
             if sub[1].open:
@@ -624,15 +672,15 @@ with tabs[2]:
                 split = right.selectbox("Split by", list(actions.SPLITS), key="actions_split")
                 heat = actions.share_by(by_name[run_name], split)
                 if need(heat, "per-step action data", by_name[run_name].steps is None):
-                    st.caption(
-                        f"Each column sums to 100%: what the agent did given the {split.lower()}"
-                        + (" (money before the decision)." if split == "Money" else ".")
-                    )
                     chart(
                         plots.action_heatmap(
                             heat, f"Action share by {split.lower()}: {run_name}", split, names
                         ),
                         f"actions by {split.lower()} {run_name}",
+                        f"Which action the agent chose given the {split.lower()}"
+                        + (" (money before the decision)" if split == "Money" else "")
+                        + ". Each column sums to 100%; darker cells are more common choices "
+                        "in that situation.",
                     )
 
         with sub[2]:
@@ -642,7 +690,11 @@ with tabs[2]:
                 matrix = actions.transition_matrix(run)
                 if need(matrix, "per-step action data", run.steps is None):
                     chart(
-                        plots.transition_matrix(matrix, run_name, names), f"transitions {run_name}"
+                        plots.transition_matrix(matrix, run_name, names),
+                        f"transitions {run_name}",
+                        "For each decision (row), how often each decision came straight after "
+                        "it in the same shop visit. Rows sum to 100%; shows habits such as "
+                        "reroll → reroll or buy → leave.",
                     )
                     pos = actions.share_by(run, "Position in visit")
                     chart(
@@ -653,6 +705,9 @@ with tabs[2]:
                             names,
                         ),
                         f"actions by position {run_name}",
+                        "Which action was chosen at the 1st, 2nd, 3rd ... decision of a shop "
+                        "visit. Each column sums to 100%; shows what the agent does first and "
+                        "how visits usually end.",
                     )
                     seqs = actions.top_sequences(run)
                     st.subheader("Most common whole visits")
@@ -672,11 +727,13 @@ with tabs[2]:
                 bins = st.slider("Episode bins", 2, 50, 10, key="actions_bins")
                 over = actions.family_over_training(runs, bins)
                 if need(over, "per-step action data", no_steps):
-                    st.caption(
-                        "Share of each kind of decision within each block of episodes. A random "
-                        "agent stays flat; a learning one should drift."
+                    chart(
+                        plots.family_over_training(over, names),
+                        "action families over training",
+                        "Share of each kind of decision within each block of episodes (block "
+                        "count set by the slider), one panel per run. A random agent stays "
+                        "flat; a learning one should drift.",
                     )
-                    chart(plots.family_over_training(over, names), "action families over training")
 
         with sub[4]:
             if sub[4].open:
@@ -685,36 +742,44 @@ with tabs[2]:
                     missing = sorted(set(run_names) - set(avail["run"]))
                     if missing:
                         st.caption("Not shown (logged before log_version 3): " + ", ".join(missing))
-                    st.caption(
-                        "Uniform-random rate: the chance of picking the action if the agent "
-                        "chose evenly among the legal actions each time it was legal. A "
-                        "preference of 1 is random-like; above 1 the agent favours it. Error "
-                        "bars are 95% intervals; q is the BH-adjusted p-value of a test "
-                        "against uniform-random choice (q < 0.05: a real preference)."
-                    )
-                    chart(plots.availability(avail, names), "action availability")
-                    st.caption(
-                        f"Preference leaves out actions legal fewer than {MIN_LEGAL} times "
-                        "(too few to tell)."
+                    chart(
+                        plots.availability(avail, names),
+                        "action availability",
+                        "For each action: how often it was legal (available and affordable), "
+                        "how often it was taken when legal, and the uniform-random rate, the "
+                        "chance of taking it if the agent chose evenly among the legal actions "
+                        "each time it was legal.",
                     )
                     chart(
                         plots.preference(avail[avail["legal_count"] >= MIN_LEGAL], names),
                         "action preference vs uniform",
+                        "Taken rate ÷ uniform-random rate: 1 is random-like, above 1 the agent "
+                        "favours the action, below 1 it avoids it. Error bars are 95% "
+                        "intervals; q is the Benjamini-Hochberg adjusted p-value of a test "
+                        "against uniform-random choice (q < 0.05: a real preference). Actions "
+                        f"legal fewer than {MIN_LEGAL} times are left out (too few to tell).",
                     )
-                    chart(plots.legal_counts(actions.legal_counts(runs), names), "legal actions")
+                    chart(
+                        plots.legal_counts(actions.legal_counts(runs), names),
+                        "legal actions",
+                        "How many of the 17 shop actions were legal at each decision. Leaving "
+                        "is always legal, so the minimum is 1; few legal actions means little "
+                        "real choice.",
+                    )
 
         with sub[5]:
             if sub[5].open:
                 corr = actions.action_outcome_correlations(runs)
                 if need(corr, "enough episodes with shop data", no_steps):
-                    st.caption(
+                    chart(
+                        plots.action_outcome_correlations(corr, names),
+                        "actions vs ante reached",
                         "Spearman ρ between how often each kind of decision is made per shop "
                         "visit and the ante reached (+1: more of it goes with deeper runs). "
-                        "Per visit, because longer runs visit more shops. "
-                        "\\* = significant at q < 0.05 (p-values Benjamini-Hochberg "
-                        "adjusted within each run); hover for p and q."
+                        "Per visit, because longer runs visit more shops. Correlation, not "
+                        "cause. \\* = significant at q < 0.05 (p-values Benjamini-Hochberg "
+                        "adjusted within each run); hover for p and q.",
                     )
-                    chart(plots.action_outcome_correlations(corr, names), "actions vs ante reached")
 
 # --- Economy --------------------------------------------------------------
 with tabs[3]:
@@ -783,45 +848,86 @@ with tabs[3]:
             if sub[0].open:
                 if need(visits, "shop visits", no_steps):
                     curve = economy.money_by_round(runs)
-                    st.caption(
-                        f"Rounds with fewer than {MIN_VISITS} shop visits are left off the "
-                        "money curve (too few runs get that far to say much)."
-                    )
                     chart(
                         plots.money_curve(curve[curve["visits"] >= MIN_VISITS], names),
                         "money curve",
+                        "Median money entering and leaving the shop in each round, with the "
+                        "middle 50% of visits shaded. The gap between the lines is what was "
+                        f"spent. Rounds with fewer than {MIN_VISITS} shop visits are left off "
+                        "(too few runs get that far to say much).",
                     )
-                    chart(plots.entry_exit_by_ante(visits, names), "money entering vs leaving")
+                    chart(
+                        plots.entry_exit_by_ante(visits, names),
+                        "money entering vs leaving",
+                        "Spread of money on entering and on leaving each shop visit, by ante "
+                        "(box: middle 50% of visits, line: median, whiskers: the rest).",
+                    )
                     money = metrics.money_by_ante(runs)
-                    chart(plots.money_by_ante(money, names), "money before each decision")
+                    chart(
+                        plots.money_by_ante(money, names),
+                        "money before each decision",
+                        "Spread of the money held just before every shop decision, by ante "
+                        "(box: middle 50%, line: median).",
+                    )
                 if "final_dollars" in econ and econ["final_dollars"].notna().any():
-                    chart(plots.final_dollars(econ, names), "money at end of run")
+                    chart(
+                        plots.final_dollars(econ, names),
+                        "money at end of run",
+                        "Money held when each episode ended, as a share of episodes. Lots of "
+                        "money left at the end was never turned into a stronger build.",
+                    )
 
         with sub[1]:
             if sub[1].open:
                 spend = economy.spend_by_category(runs)
                 if need(spend, "purchases", no_steps):
-                    chart(plots.spend_share(spend, names), "spending by category")
+                    chart(
+                        plots.spend_share(spend, names),
+                        "spending by category",
+                        "Where the shop money went (jokers, packs, vouchers, rerolls, ...) as a "
+                        "share of all shop spending, one bar per run.",
+                    )
                     chart(
                         plots.spend_by_ante(economy.spend_by_category(runs, by_ante=True), names),
                         "spending mix by ante",
+                        "The same split of shop spending, separately for each ante: shows "
+                        "whether the agent's spending changes as the run goes on.",
                     )
                 income = economy.income_by_source(runs)
                 if need(income, "income"):
-                    chart(plots.income_sources(income, names), "income by source")
+                    chart(
+                        plots.income_sources(income, names),
+                        "income by source",
+                        "Mean money gained per episode from each source: selling and "
+                        "money-making consumables in the shop, plus the cash-out parts (blind "
+                        "reward, unused hands and discards, interest, jokers) for newer runs.",
+                    )
                 spend_ep = metrics.spend_per_episode(runs)
                 if need(spend_ep, "spend data"):
-                    chart(plots.spend_per_episode(spend_ep, names), "spend per episode")
+                    chart(
+                        plots.spend_per_episode(spend_ep, names),
+                        "spend per episode",
+                        "Total money spent in the shop over a whole episode, as a share of "
+                        "episodes. Longer runs visit more shops, so they tend to spend more.",
+                    )
 
         with sub[2]:
             if sub[2].open:
                 if need(visits, "shop visits", no_steps):
-                    st.caption(
-                        "Interest is paid at cash-out: $1 per $5 held, up to the cap. "
-                        "Estimated here from the money left when leaving the shop."
+                    chart(
+                        plots.exit_brackets(visits, names),
+                        "money left after shopping",
+                        "Money left on leaving each shop, in $5 brackets, as a share of visits. "
+                        "Interest is paid at cash-out at $1 per $5 held, up to the cap (dashed "
+                        "line), so money above the cap earns nothing.",
                     )
-                    chart(plots.exit_brackets(visits, names), "money left after shopping")
-                    chart(plots.interest_by_ante(visits, names), "estimated interest by ante")
+                    chart(
+                        plots.interest_by_ante(visits, names),
+                        "estimated interest by ante",
+                        "Mean interest the money left on leaving the shop would earn at the "
+                        "next cash-out, by ante. It is estimated from the exit balance, so it "
+                        "ignores money gained or spent during the round.",
+                    )
                     parked = visits.groupby("run", as_index=False).agg(
                         visits=("exit", "size"),
                         exits_at_cap=("at_cap", "mean"),
@@ -844,33 +950,54 @@ with tabs[3]:
                     )
                 eff = economy.interest_efficiency(runs)
                 if need_new(eff, "exact interest"):
-                    chart(plots.interest_efficiency(eff, names), "interest efficiency")
+                    chart(
+                        plots.interest_efficiency(eff, names),
+                        "interest efficiency",
+                        INTEREST_EFFICIENCY,
+                    )
 
         with sub[3]:
             if sub[3].open:
                 if need(visits, "shop visits", no_steps):
-                    chart(plots.rerolls_per_visit(visits, names), "rerolls per visit")
+                    chart(
+                        plots.rerolls_per_visit(visits, names),
+                        "rerolls per visit",
+                        "How many times the shop was rerolled in one visit, as a share of visits.",
+                    )
                     chart(
                         plots.reroll_by_ante(economy.reroll_stats(runs), names),
                         "reroll spend by ante",
+                        "Mean money spent on rerolls per shop visit, by ante. A reroll's price "
+                        "goes up by $1 each time within a visit.",
                     )
                 paid = economy.price_paid(runs)
                 if need(paid, "purchases", no_steps):
-                    chart(plots.price_paid(paid, names), "price paid")
-                    chart(plots.joker_price_by_ante(paid, names), "joker price by ante")
+                    chart(
+                        plots.price_paid(paid, names),
+                        "price paid",
+                        "Spread of the price paid per purchase in each category (box: middle "
+                        "50%, line: median).",
+                    )
+                    chart(
+                        plots.joker_price_by_ante(paid, names),
+                        "joker price by ante",
+                        "Mean price paid per joker bought, by ante: whether the agent buys "
+                        "pricier (usually rarer) jokers later in the run.",
+                    )
 
         with sub[4]:
             if sub[4].open:
                 corr = economy.outcome_correlations(econ)
                 if need(corr, "enough episodes with shop data", no_steps):
-                    st.caption(
-                        "Spearman ρ between each habit and the ante reached (+1: more of it "
-                        "goes with deeper runs). Totals grow with run length, so they "
+                    chart(
+                        plots.outcome_correlations(corr, names),
+                        "economy vs ante reached",
+                        "Spearman ρ between each economy habit and the ante reached (+1: more "
+                        "of it goes with deeper runs). Totals grow with run length, so they "
                         "correlate almost by construction; compare the per-visit measures. "
                         "\\* = significant at q < 0.05 (p-values Benjamini-Hochberg "
-                        "adjusted within each run); hover for p and q."
+                        "adjusted within each run); hover for p and q.",
                     )
-                    chart(plots.outcome_correlations(corr, names), "economy vs ante reached")
                     choices = {
                         k: v
                         for k, v in economy.OUTCOME_METRICS.items()
@@ -882,27 +1009,47 @@ with tabs[3]:
                     chart(
                         plots.economy_by_outcome(econ, metric, choices[metric], names),
                         f"{choices[metric]} by ante reached",
+                        f"Spread of {choices[metric].lower()} per episode, grouped by the ante "
+                        "the episode reached (box: middle 50%, line: median). Pick the habit "
+                        "above.",
                     )
 
         with sub[5]:
             if sub[5].open:
                 breakdown = economy.income_breakdown(runs)
                 if need_new(breakdown, "cash-out breakdown"):
-                    chart(plots.income_breakdown(breakdown, names), "cash-out income")
+                    chart(
+                        plots.income_breakdown(breakdown, names),
+                        "cash-out income",
+                        "Mean cash-out money per beaten blind, split into its parts (blind "
+                        "reward, unused hands, unused discards, interest, jokers, tags, minus "
+                        "rent), by ante. These are the exact amounts the game paid.",
+                    )
                     eff = economy.interest_efficiency(runs)
                     if need_new(eff, "exact interest"):
                         chart(
-                            plots.interest_efficiency(eff, names), "interest efficiency (cash-out)"
+                            plots.interest_efficiency(eff, names),
+                            "interest efficiency (cash-out)",
+                            INTEREST_EFFICIENCY,
                         )
 
         with sub[6]:
             if sub[6].open:
                 conversion = economy.offer_conversion(runs)
                 if need_new(conversion, "shop offers"):
-                    chart(plots.offer_conversion(conversion, names), "offer conversion")
+                    chart(
+                        plots.offer_conversion(conversion, names),
+                        "offer conversion",
+                        "For each kind of shop item: the share of offers the agent could afford, "
+                        "and the share it bought, of everything offered and of what it could "
+                        "afford. A low rate when affordable means the agent passes them up.",
+                    )
                     chart(
                         plots.offered_vs_paid(conversion, economy.price_paid(runs), names),
                         "price offered vs paid",
+                        "Mean price of the items the shop offered next to the mean price of "
+                        "those the agent bought, per category. Paying less than offered means "
+                        "it picks the cheaper items.",
                     )
                     table(
                         conversion.round(3),
@@ -937,13 +1084,29 @@ with tabs[4]:
             )
         bought = metrics.most_bought(runs, top)
         if len(runs) > 1 and need(bought, "joker purchases", no_steps):
-            chart(plots.most_bought(bought, names), "most bought jokers")
+            chart(
+                plots.most_bought(bought, names),
+                "most bought jokers",
+                "How many times each joker was bought across all episodes, for the most-bought "
+                "jokers (count set by the slider), one bar per run.",
+            )
         first = metrics.first_bought_ante(runs)
         if len(first):
-            chart(plots.first_bought_ante(first, names), "first bought ante")
+            chart(
+                plots.first_bought_ante(first, names),
+                "first bought ante",
+                "The ante in which each joker was first bought in an episode, as a share of "
+                "first purchases: how early the agent builds its joker line-up.",
+            )
         co = metrics.joker_cooccurrence(run, top)
         if need(co, "end-of-episode joker builds"):
-            chart(plots.cooccurrence(co, run_name, names), f"joker cooccurrence {run_name}")
+            chart(
+                plots.cooccurrence(co, run_name, names),
+                f"joker cooccurrence {run_name}",
+                "How many episodes ended holding both jokers in the row and the column; the "
+                "diagonal is how often each joker was held at the end at all. Shows which "
+                "jokers end up together.",
+            )
         swaps = metrics.sell_then_buy(run)
         st.subheader("Sold → next joker bought")
         if need(swaps, "sell-then-buy pairs", run.steps is None):
@@ -998,10 +1161,21 @@ with tabs[6]:
             modal_html(details.blind_grid_html(details.blind_infos(bosses, text, icon_uri), names))
         ratio = metrics.score_ratio(runs)
         if need(ratio, "round data", no_rounds):
-            chart(plots.score_ratio(ratio, names), "score vs target")
+            chart(
+                plots.score_ratio(ratio, names),
+                "score vs target",
+                "Chips scored ÷ the blind's target for every blind played, by ante and blind "
+                "type. At or above the dashed line (1) the blind was beaten; the further "
+                "above, the more comfortably.",
+            )
         dead = metrics.deaths(runs)
         if need(dead, "lost rounds", no_rounds):
-            chart(plots.deaths(dead, names), "blind that ended the run")
+            chart(
+                plots.deaths(dead, names),
+                "blind that ended the run",
+                "Number of episodes lost on each blind, coloured by ante: where runs fail, "
+                "and which boss blinds are hardest for the agent.",
+            )
 
 # --- Episode explorer -----------------------------------------------------
 with tabs[7]:
@@ -1040,7 +1214,13 @@ with tabs[7]:
 
             timeline = metrics.episode_timeline(run, episode)
             if need(timeline, "shop decisions in this episode", run.steps is None):
-                chart(plots.episode_money(timeline, names), f"episode {episode} money {run_name}")
+                chart(
+                    plots.episode_money(timeline, names),
+                    f"episode {episode} money {run_name}",
+                    "Money after each shop decision in this episode, in order. Hover a point "
+                    "for the action and item; jumps between shop visits are the round's "
+                    "cash-out.",
+                )
                 timeline = timeline.assign(
                     icon=timeline["item_key"].map(
                         lambda k: sprites.data_uri(k) if sprites and catalog.is_joker(k) else None
@@ -1098,7 +1278,7 @@ with export_area, st.expander("Export"):
         st.caption(f"Chart export unavailable: {problem}")
     st.download_button(
         f"Charts on this tab: {len(CHARTS)} (ZIP)",
-        data=functools.partial(export.charts_zip, dict(CHARTS), fmts),
+        data=functools.partial(export.charts_zip, dict(CHARTS), fmts, dict(CHART_DESCRIPTIONS)),
         disabled=problem is not None,
         file_name=f"balatro_charts_{stamp}.zip",
         mime="application/zip",
