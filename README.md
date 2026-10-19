@@ -24,7 +24,7 @@ The dashboard reads what two scripts write inside a jackdaw-balatro checkout:
 
 | Script | What it does |
 |---|---|
-| `scripts/train_random_shop.py` | Shop-only training harness (17 shop actions, random shop agent, random or Jackdaw `smart_agent` play). Writes `runs/<run-name>/`. |
+| `scripts/train_random_shop.py` | Shop-only training harness (17 shop actions, random or tabular Q-learning shop agent, random or Jackdaw `smart_agent` play). Writes `runs/<run-name>/`. |
 | `scripts/verify_shop_rl.py` | Feasibility checks for a shop-only RL wrapper (raw-state keys, shop indexing, env deepcopy, oracle timing, ...). |
 
 **Option A: use the fork that already has them.**
@@ -50,6 +50,8 @@ uv run python scripts/train_random_shop.py --episodes 500 --play smart \
     --eval-every 50 --eval-episodes 20      # + greedy eval on fixed seeds
 uv run python scripts/train_random_shop.py --episodes 500 --play smart \
     --seed 1 --group smart_random --run-name smart_random_s1   # one seed of a group
+uv run python scripts/train_random_shop.py --episodes 1000 --play smart \
+    --shop qlearn --eval-every 100 --eval-episodes 20   # tabular Q-learning shop agent
 uv run python scripts/verify_shop_rl.py
 ```
 
