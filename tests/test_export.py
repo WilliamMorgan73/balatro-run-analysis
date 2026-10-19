@@ -90,6 +90,18 @@ def test_render_and_charts_zip(monkeypatch):
     assert sorted(z.namelist()) == ["charts/a.png", "charts/a.svg", "charts/b.png", "charts/b.svg"]
 
 
+def test_charts_zip_readme(monkeypatch):
+    monkeypatch.setattr(
+        export.pio, "write_images", lambda figs, paths, format, **kw: [p.touch() for p in paths]
+    )
+    fig = go.Figure(go.Bar(y=[1, 2]))
+    descriptions = {"ante_reached": "Share of episodes per ante.", "price_paid": "Price per buy."}
+    z = _open(export.charts_zip({"ante_reached": fig, "price_paid": fig}, ["png"], descriptions))
+    readme = z.read("charts/README.md").decode()
+    assert "## ante_reached\n\n`ante_reached.png`\n\nShare of episodes per ante." in readme
+    assert "## price_paid" in readme and "Price per buy." in readme
+
+
 def test_export_problem_reports_failure(monkeypatch):
     def boom(self, **kw):
         raise RuntimeError("no browser\nmore detail")
