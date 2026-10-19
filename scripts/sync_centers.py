@@ -2,7 +2,7 @@
 
 Keeps only what the dashboard needs: display name and set for every center
 (jokers, decks, packs, vouchers, consumables, enhancements, ...), sprite
-positions for jokers and decks, deck configs, and blind names, chip positions,
+positions for jokers, decks, consumables, vouchers and packs, deck configs, and blind names, chip positions,
 colours and rewards (no game art).
 
     uv run python scripts/sync_centers.py [path/to/jackdaw/engine/data]
@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_SRC = ROOT.parent / "jackdaw-balatro" / "jackdaw" / "engine" / "data"
 OUT = ROOT / "src" / "balatro_analysis" / "data"
-SPRITE_SETS = {"Joker", "Back"}
+SPRITE_SETS = {"Joker", "Back", "Tarot", "Planet", "Spectral", "Voucher", "Booster"}
 
 
 def main() -> None:

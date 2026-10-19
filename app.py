@@ -56,7 +56,6 @@ reload_if_changed()
 
 from balatro_analysis import (  # noqa: E402
     actions,
-    catalog,
     collection,
     details,
     economy,
@@ -67,7 +66,7 @@ from balatro_analysis import (  # noqa: E402
 )
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
 from balatro_analysis.loader import Run, find_runs, load_run  # noqa: E402
-from balatro_analysis.names import Names  # noqa: E402
+from balatro_analysis.names import Names, split_items  # noqa: E402
 from balatro_analysis.picker import PickerUnavailable, pick_directory  # noqa: E402
 from balatro_analysis.sprites import Sprites, find_balatro, game_archive  # noqa: E402
 
@@ -177,6 +176,27 @@ def chart(fig, name: str, description: str) -> None:
 def table(df, keys: dict[str, str] | None = None, **kwargs) -> None:
     """A dataframe with key columns and headers in the current naming mode."""
     st.dataframe(names.frame(df, keys), hide_index=True, width="stretch", **kwargs)
+
+
+def icon_table(df, item_cols: list[str], keys: dict[str, str] | None = None, **kwargs) -> None:
+    """``table`` with an icon strip before each item-list column in ``item_cols``
+    (held jokers, consumables, ...).  The names stay next to it; without the game
+    files there are only the names."""
+    present = [c for c in item_cols if c in df]
+    if not sprites or not present:
+        table(df, keys, **kwargs)
+        return
+    df = df.copy()
+    config = dict(kwargs.pop("column_config", None) or {})
+    for col in present:
+        icons = f"{col}_icons"
+        df.insert(
+            df.columns.get_loc(col), icons, df[col].map(lambda v: sprites.strip_uri(split_items(v)))
+        )
+        config[names.column(icons)] = st.column_config.ImageColumn(
+            names.column(col), width="medium"
+        )
+    table(df, keys, column_config=config, row_height=60, **kwargs)
 
 
 def browse_runs_dir() -> None:
@@ -1223,7 +1243,7 @@ with tabs[7]:
                 )
                 timeline = timeline.assign(
                     icon=timeline["item_key"].map(
-                        lambda k: sprites.data_uri(k) if sprites and catalog.is_joker(k) else None
+                        lambda k: sprites.data_uri(k) if sprites else None
                     )
                 )
                 order = [
@@ -1236,17 +1256,26 @@ with tabs[7]:
                     "item_key",
                 ]
                 order += [c for c in timeline.columns if c not in order]
-                table(
+                icon_table(
                     timeline[order],
+                    ["jokers_before", "consumables_before"],
                     column_config={
                         names.column("icon"): st.column_config.ImageColumn("", width="small")
                     },
-                    row_height=60 if sprites else None,
                 )
             st.subheader("Blinds played")
             rounds = metrics.episode_rounds(run, episode)
             if need(rounds, "rounds in this episode", run.rounds is None):
-                table(rounds)
+                if "jokers" in rounds:
+                    st.caption(
+                        "Jokers and consumables are what was held entering each blind (after "
+                        "the shop before it); the first blind comes before any shop."
+                    )
+                icon_table(
+                    rounds,
+                    ["jokers", "consumables"],
+                    {"jokers": "items", "consumables": "items"},
+                )
 
 # --- Export (sidebar, after every chart is registered) --------------------
 with export_area, st.expander("Export"):

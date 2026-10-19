@@ -2,7 +2,7 @@ import io
 import subprocess
 
 import pytest
-from conftest import DECK_COLOUR, JOKER_COLOUR, SOUL_COLOUR
+from conftest import DECK_COLOUR, JOKER_COLOUR, SOUL_COLOUR, TAROT_COLOUR
 from PIL import Image
 
 from balatro_analysis import catalog, picker
@@ -68,6 +68,25 @@ def test_sprites_crop_and_soul(fake_game):
     assert s.png("j_not_a_joker") is None
     assert s.png(None) is None
     assert s.data_uri("j_joker").startswith("data:image/png;base64,")
+
+
+def test_consumable_icons(fake_game):
+    s = Sprites(fake_game / "Balatro.exe")
+    assert _pixel(s.png("c_hermit")) == TAROT_COLOUR  # tarots, planets, spectrals: Tarots.png
+    assert s.png("v_overstock_norm") is None  # no Vouchers.png in this install
+
+
+def test_icon_strip(fake_game):
+    s = Sprites(fake_game / "Balatro.exe")
+    strip = Image.open(io.BytesIO(s.strip_png(["j_joker", "nope", "c_hermit"])))
+    gap = 4 * 2  # STRIP_GAP at scale 2
+    assert strip.size == (142 * 2 + gap, 190)  # unknown key left out
+    assert strip.getpixel((5, 5)) == JOKER_COLOUR
+    assert strip.getpixel((142 + gap + 5, 5)) == TAROT_COLOUR
+    assert strip.getpixel((142 + 2, 5))[3] == 0  # transparent gap
+    assert s.strip_png(["nope"]) is None
+    assert s.strip_png([]) is None
+    assert s.strip_uri(["j_joker"]).startswith("data:image/png;base64,")
 
 
 # --- picker ----------------------------------------------------------------

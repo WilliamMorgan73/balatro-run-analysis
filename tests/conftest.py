@@ -17,6 +17,7 @@ JOKER_COLOUR = (255, 0, 0, 255)  # j_joker at pos (0, 0)
 SOUL_COLOUR = (0, 0, 255, 255)  # j_caino soul layer at (3, 9)
 DECK_COLOUR = (0, 255, 0, 255)  # b_black at pos (3, 2)
 BLIND_COLOUR = (255, 255, 0, 255)  # bl_hook chip at (0, 7)
+TAROT_COLOUR = (255, 0, 255, 255)  # c_hermit at (9, 0) in Tarots.png
 
 
 @pytest.fixture(autouse=True)
@@ -113,6 +114,7 @@ def fake_game(tmp_path: Path) -> Path:
             _atlas(2, {(0, 0): JOKER_COLOUR, (3, 9): SOUL_COLOUR}),
         )
         z.writestr("resources/textures/2x/Enhancers.png", _atlas(2, {(3, 2): DECK_COLOUR}))
+        z.writestr("resources/textures/2x/Tarots.png", _atlas(2, {(9, 0): TAROT_COLOUR}))
         z.writestr("resources/textures/1x/Jokers.png", _atlas(1, {(0, 0): JOKER_COLOUR}))
         z.writestr(
             "resources/textures/2x/BlindChips.png", _atlas(2, {(0, 7): BLIND_COLOUR}, (34, 34))

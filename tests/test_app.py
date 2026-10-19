@@ -408,3 +408,23 @@ def test_chart_description_shown(runs_dir):
     at = _run(runs_dir, tab="Overview")
     assert not at.exception
     assert any("Share of episodes that ended at each ante" in c.value for c in at.caption)
+
+
+@pytest.mark.parametrize("pretty", [True, False])
+def test_explorer_tables_show_icons_not_lists(runs_dir, fake_game, pretty):
+    """Held jokers/consumables: an icon strip plus names, never raw list cells."""
+    at = _run(runs_dir, fake_game, tab="Episode explorer")
+    if not pretty:
+        at.toggle(key="pretty").set_value(False).run()
+    assert not at.exception
+    frames = [d.value for d in at.dataframe]
+    shop = next(f for f in frames if any("icons" in str(c) for c in f.columns))
+    icons = next(c for c in shop.columns if str(c).startswith(("Jokers", "jokers_before")))
+    assert shop[icons].str.startswith("data:image/png;base64,", na=True).all()
+    assert shop[icons].notna().any()  # j_joker has art in the fake install
+    for f in frames:
+        assert not f.map(lambda v: isinstance(v, list)).any().any()
+    blinds = frames[-1]  # Blinds played: held entering each blind, with icons
+    held, icons = ("Jokers", "Jokers icons") if pretty else ("jokers", "jokers_icons")
+    assert {held, icons} <= set(blinds.columns)
+    assert blinds[icons].notna().any()

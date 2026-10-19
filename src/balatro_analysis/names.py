@@ -111,7 +111,8 @@ DEFAULT_KEYS = {
 }
 
 
-def _split_items(value: Any) -> list[str]:
+def split_items(value: Any) -> list[str]:
+    """Item keys from a list cell or a ``;``/``,``-joined string."""
     if isinstance(value, list | tuple):
         return [str(v) for v in value if v]
     if isinstance(value, str) and value:
@@ -132,13 +133,13 @@ class Names:
     blind = item
 
     def items(self, value: Any) -> str:
-        return ", ".join(self.item(k) for k in _split_items(value))
+        return ", ".join(self.item(k) for k in split_items(value))
 
     def stake(self, stake: Any) -> str:
         return catalog.stake_name(stake) if self.pretty else str(stake)
 
     def stakes(self, value: Any) -> str:
-        return ", ".join(self.stake(s) for s in _split_items(value))
+        return ", ".join(self.stake(s) for s in split_items(value))
 
     def action(self, name: Any) -> str:
         if not isinstance(name, str):
