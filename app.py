@@ -249,6 +249,36 @@ def joker_grid(items: list[tuple[str, str]], prefix: str) -> None:
     )
 
 
+def item_table(
+    df: pd.DataFrame, item_cols: list[str], prefix: str, keys: dict[str, str] | None = None
+) -> None:
+    """A table whose item icons (jokers, consumables, vouchers, packs) open the same
+    details modals as elsewhere: jokers their collection card, the rest their effect
+    text and how often the selected runs bought, sold or used them."""
+    cards = {c.key: c for c in joker_cards()}
+    text = cached_game_text(str(archive), pkg_mtime) if archive else None
+    counts = metrics.item_actions(runs)
+
+    def dialog(key: str, did: str) -> str:
+        if key in cards:
+            return collection.joker_dialog(cards[key], names, did)
+        stats = []
+        if key in counts.index:
+            c = counts.loc[key]
+            stats = [
+                (label, str(int(c[col])))
+                for label, col in (("Times bought", "bought"), ("Times sold", "sold"),
+                                   ("Times used in the shop", "used"))
+                if c[col]
+            ]  # fmt: skip
+        return details.item_dialog(
+            key, did, names, text.item(key) if text else None, icon_uri(key), stats
+        )
+
+    st.caption("Click an item for its details.")
+    modal_html(details.item_table_html(df, item_cols, names, prefix, dialog, icon_uri, keys))
+
+
 def deck_infos(keys: list[str]) -> list[details.DeckInfo]:
     deck_table = metrics.by_deck(runs)
     text = cached_game_text(str(archive), pkg_mtime) if archive else None
@@ -1404,27 +1434,10 @@ with tabs[7]:
                     "for the action and item; jumps between shop visits are the round's "
                     "cash-out.",
                 )
-                timeline = timeline.assign(
-                    icon=timeline["item_key"].map(
-                        lambda k: sprites.data_uri(k) if sprites else None
-                    )
-                )
-                order = [
-                    "step",
-                    "ante",
-                    "round",
-                    "dollars_before",
-                    "action_name",
-                    "icon",
-                    "item_key",
-                ]
+                order = ["step", "ante", "round", "dollars_before", "action_name", "item_key"]
                 order += [c for c in timeline.columns if c not in order]
-                icon_table(
-                    timeline[order],
-                    ["jokers_before", "consumables_before"],
-                    column_config={
-                        names.column("icon"): st.column_config.ImageColumn("", width="small")
-                    },
+                item_table(
+                    timeline[order], ["item_key", "jokers_before", "consumables_before"], "ex-shop"
                 )
             st.subheader("Blinds played")
             rounds = metrics.episode_rounds(run, episode)
@@ -1434,11 +1447,7 @@ with tabs[7]:
                         "Jokers and consumables are what was held entering each blind (after "
                         "the shop before it); the first blind comes before any shop."
                     )
-                icon_table(
-                    rounds,
-                    ["jokers", "consumables"],
-                    {"jokers": "items", "consumables": "items"},
-                )
+                item_table(rounds, ["jokers", "consumables"], "ex-blind")
 
 # --- Export (sidebar, after every chart is registered) --------------------
 with export_area, st.expander("Export"):

@@ -122,6 +122,8 @@ def fake_game(tmp_path: Path) -> Path:
         z.writestr("localization/en-us.lua", FAKE_LOCALIZATION)
         z.writestr("card.lua", FAKE_CARD_LUA)
         z.writestr("back.lua", FAKE_BACK_LUA)
+        z.writestr("functions/common_events.lua", FAKE_COMMON_EVENTS)
+        z.writestr("game.lua", FAKE_GAME_LUA)
     return game
 
 
@@ -213,7 +215,54 @@ return {
             },
         },
     },
+        Tarot={
+            c_hermit={
+                name="The Hermit",
+                text={
+                    "Doubles money",
+                    "{C:inactive}(Max of {C:money}$#1#{C:inactive})",
+                },
+            },
+            c_magician={
+                name="The Magician",
+                text={
+                    "Enhances {C:attention}#1#{} selected",
+                    "cards to {C:attention}#2#s",
+                },
+            },
+        },
+        Planet={
+            c_mercury={
+                name="Mercury",
+                text={
+                    "{S:0.8}({S:0.8,V:1}lvl.#1#{S:0.8}){} Level up",
+                    "{C:attention}#2#",
+                    "{C:mult}+#3#{} Mult and",
+                    "{C:chips}+#4#{} chips",
+                },
+            },
+        },
+        Enhanced={
+            m_lucky={
+                name="Lucky Card",
+                text={
+                    "lucky",
+                },
+            },
+        },
+        Other={
+            p_arcana_normal={
+                name="Arcana Pack",
+                text={
+                    "Choose {C:attention}#1#{} of up to",
+                    "{C:attention}#2#{C:tarot} Tarot{} cards",
+                },
+            },
+        },
     misc={
+        poker_hands={
+            Pair="Pair",
+        },
         suits_singular={
             Clubs="Club",
             Diamonds="Diamond",
@@ -241,6 +290,41 @@ function Back:generate_UI(other, ui_scale, min_dims, challenge)
         elseif name_to_check == 'Nebula Deck' then loc_args = {localize{type = 'name_text', key = 'v_telescope', set = 'Voucher'}, -1}
         end
 end
+"""
+
+
+# generate_card_ui's per-set sections (the unlock branch above them must be skipped)
+FAKE_COMMON_EVENTS = """
+function generate_card_ui(_c, full_UI_table, specific_vars, card_type, badges, hide_desc)
+    if _c.locked then
+        if _c.name == 'The Hermit' then loc_vars = {_c.unlock_condition.extra}
+        end
+    end
+    if _c.set == 'Other' then
+    elseif _c.set == 'Booster' then
+        local desc_override = 'p_arcana_normal'
+        if _c.name == 'Arcana Pack' then desc_override = 'p_arcana_normal'; loc_vars = {_c.config.choose, _c.config.extra}
+        end
+    elseif _c.set == 'Planet' then
+        loc_vars = {
+            G.GAME.hands[_c.config.hand_type].level,localize(_c.config.hand_type, 'poker_hands'), G.GAME.hands[_c.config.hand_type].l_mult, G.GAME.hands[_c.config.hand_type].l_chips,
+            colours = {G.C.UI.TEXT_DARK}
+        }
+    elseif _c.set == 'Tarot' then
+       if _c.name == "The Hermit" then loc_vars = {_c.config.extra}
+       elseif _c.name == "The Magician" or _c.name == "The Empress" then loc_vars = {_c.config.max_highlighted, localize{type = 'name_text', set = 'Enhanced', key = _c.config.mod_conv}}
+       end
+    end
+end
+
+function other_function()
+end
+"""
+
+FAKE_GAME_LUA = """
+        hands = {
+            ["Pair"] =              {visible = true,    order = 11,mult = 2,   chips = 10,  s_mult = 2,   s_chips = 10,  level = 1, l_mult = 1, l_chips = 15, played = 0},
+        },
 """
 
 

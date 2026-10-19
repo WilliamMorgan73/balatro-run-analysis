@@ -155,3 +155,56 @@ def test_blinds_json_has_chip_data():
     assert hook["pos"] == {"x": 0, "y": 7} and hook["colour"].startswith("#")
     assert catalog.blinds()["bl_final_bell"]["showdown"] is True
     assert json.dumps(catalog.centers()["b_red"]["config"]) == '{"discards": 1}'
+
+
+# --- tables whose item icons open dialogs -------------------------------------
+
+
+def _item_table(pretty=True, icon=lambda k: "data:image/png;base64,AAAA"):
+    df = pd.DataFrame(
+        {
+            "step": [0, 1],
+            "action_name": ["buy_card_0", "skip"],
+            "item_key": ["j_joker", None],
+            "jokers_before": [[], ["j_joker", "j_greedy_joker"]],
+            "note": ["<b>x</b>", 1.0],
+            "beaten": [True, False],
+        }
+    )
+    calls = []
+
+    def dialog(key, did):
+        calls.append(key)
+        return f'<dialog id="{did}">{key}</dialog>'
+
+    out = details.item_table_html(
+        df, ["item_key", "jokers_before"], Names(pretty), "t", dialog, icon
+    )
+    return out, calls
+
+
+def test_item_table_tiles_and_dialogs():
+    out, calls = _item_table()
+    assert out.count('data-dialog="t-j_joker"') == 2  # one tile per occurrence
+    assert out.count('<dialog id="t-j_joker">') == 1  # one dialog per item
+    assert calls == ["j_joker", "j_greedy_joker"]
+    assert "&lt;b&gt;x&lt;/b&gt;" in out and "<b>x</b>" not in out  # cells escaped
+    assert "Buy card 1" in out and '<td class="dt-num">1</td>' in out  # 1.0 shown as 1
+    assert '<td class="dt-num">0</td>' in out  # numpy ints are numbers too
+    assert "<td>✓</td>" in out and "<td>✗</td>" in out  # numpy bools
+
+
+def test_item_table_without_art_and_in_key_mode():
+    out, _ = _item_table(pretty=False, icon=lambda k: None)
+    assert '<span class="dt-chipname">j_greedy_joker</span>' in out  # still clickable
+    assert "buy_card_0" in out and "<img" not in out
+
+
+def test_item_dialog(fake_game):
+    gt = GameText.load(fake_game / "Balatro.exe")
+    out = details.item_dialog(
+        "c_hermit", "d1", Names(), gt.item("c_hermit"), None, [("Times bought", "3")]
+    )
+    assert "The Hermit" in out and "Doubles money" in out
+    assert "Tarot" in out and "Times bought" in out
+    assert "needs the game files" in details.item_dialog("c_hermit", "d2", Names(), None, None)

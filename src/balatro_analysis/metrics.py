@@ -517,3 +517,18 @@ def episode_rounds(run: Run, episode: int) -> pd.DataFrame:
         at = rest.index("beaten") + 1
         rounds = rounds[rest[:at] + held + rest[at:]]
     return rounds
+
+
+def item_actions(runs: list[Run]) -> pd.DataFrame:
+    """How many times each item (by key) was bought, sold and used in the shop,
+    over all ``runs``: index ``item_key``, columns ``bought``, ``sold``, ``used``."""
+    frames = [r.steps[["action_name", "item_key"]] for r in runs if r.steps is not None]
+    s = pd.concat(frames, ignore_index=True).dropna() if frames else pd.DataFrame()
+    if s.empty:
+        return pd.DataFrame(columns=["bought", "sold", "used"])
+    kind = s["action_name"].map(
+        lambda a: "bought" if a in BUY_ACTIONS else "sold" if a.startswith("sell_") else
+        "used" if a.startswith("use_") else None
+    )  # fmt: skip
+    counts = pd.crosstab(s["item_key"], kind)
+    return counts.reindex(columns=["bought", "sold", "used"], fill_value=0)
