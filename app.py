@@ -60,6 +60,7 @@ from balatro_analysis import (  # noqa: E402
     details,
     economy,
     export,
+    find,
     metrics,
     plots,
     stats,
@@ -194,7 +195,7 @@ def icon_table(df, item_cols: list[str], keys: dict[str, str] | None = None, **k
             df.columns.get_loc(col), icons, df[col].map(lambda v: sprites.strip_uri(split_items(v)))
         )
         config[names.column(icons)] = st.column_config.ImageColumn(
-            names.column(col), width="medium"
+            "", help=names.column(col), width="medium"
         )
     table(df, keys, column_config=config, row_height=60, **kwargs)
 
@@ -288,25 +289,90 @@ with st.sidebar:
         st.warning(f"No runs (folders with episodes.csv) under {root}")
         st.stop()
     run_dirs = {str(p.relative_to(root)) if p != root else p.name: p for p in run_paths}
-    picked = st.multiselect("Runs", list(run_dirs), default=list(run_dirs))
-    if not picked:
-        st.stop()
     pkg_mtime = package_mtime()
 
     def run_mtime(path: Path) -> float:
         files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
         return max(f.stat().st_mtime for f in files if f.is_file())
 
-    runs, not_ready = [], []
-    for n in picked:
+    def load(name: str) -> Run | None:
+        """The run, or None if it has no episodes yet (still training?) or can't be read."""
         try:
-            run = cached_run(str(run_dirs[n]), str(root), run_mtime(run_dirs[n]), pkg_mtime)
+            run = cached_run(str(run_dirs[name]), str(root), run_mtime(run_dirs[name]), pkg_mtime)
         except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
-            run = None
-        if run is None or run.episodes.empty:
-            not_ready.append(n)
-        else:
-            runs.append(run)
+            return None
+        return None if run.episodes.empty else run
+
+    loaded = {n: load(n) for n in run_dirs}
+    run_index = find.run_index(loaded)
+
+    # Every run starts selected; runs that appear later (Reload runs) are added
+    if st.session_state.get("_runs_root") != str(root):
+        st.session_state.picked_runs = list(run_dirs)
+    else:
+        known = st.session_state.get("_known_runs", [])
+        kept = [n for n in st.session_state.get("picked_runs", []) if n in run_dirs]
+        st.session_state.picked_runs = kept + [n for n in run_dirs if n not in known]
+    st.session_state._runs_root, st.session_state._known_runs = str(root), list(run_dirs)
+
+    shown_runs = find.find_runs_in(
+        run_index,
+        st.session_state.get("run_search", ""),
+        st.session_state.get("run_sort", "Name"),
+        st.session_state.get("run_shop") or None,
+        st.session_state.get("run_play") or None,
+        st.session_state.get("run_group") or None,
+    )
+    # Selected runs the filters hide stay selected (and say so) rather than vanish
+    hidden = [n for n in st.session_state.picked_runs if n not in shown_runs]
+    picked = st.multiselect("Runs", shown_runs + hidden, key="picked_runs")
+    if hidden:
+        st.caption(
+            f"{len(hidden)} selected run{'s' if len(hidden) > 1 else ''} hidden by the "
+            "filters below: " + ", ".join(hidden)
+        )
+
+    def pick_runs(names_: list[str]) -> None:
+        st.session_state.picked_runs = names_
+
+    with st.expander("Find runs"):
+        st.text_input("Search runs", key="run_search", placeholder="part of a run name")
+        st.selectbox("Sort by", list(find.RUN_SORTS), key="run_sort")
+        for label, col, key in (
+            ("Shop agent", "shop_agent", "run_shop"),
+            ("Play agent", "play_agent", "run_play"),
+            ("Group", "group", "run_group"),
+        ):
+            values = sorted(run_index[col].unique())
+            if len(values) > 1:
+                st.multiselect(
+                    label,
+                    values,
+                    key=key,
+                    placeholder="All",
+                    format_func=lambda v: v or "(no group)",
+                )
+        st.dataframe(
+            run_index.set_index("run")
+            .loc[shown_runs, ["mean_ante", "episodes", "group"]]
+            .rename(columns=names.column),
+            column_config={names.column("mean_ante"): st.column_config.NumberColumn(format="%.2f")},
+            height=min(36 * (len(shown_runs) + 1) + 2, 300),
+        )
+        b1, b2, b3 = st.columns(3)
+        b1.button(
+            "Best per group",
+            on_click=pick_runs,
+            args=(find.best_per_group(run_index[run_index["run"].isin(shown_runs)]),),
+            help="The highest mean-ante run of each group shown (the best run if none are grouped)",
+        )
+        b2.button("All shown", on_click=pick_runs, args=(shown_runs,))
+        b3.button("Clear", on_click=pick_runs, args=([],))
+    if not picked:
+        st.stop()
+
+    runs = [loaded[n] for n in picked if loaded[n] is not None]
+    not_ready = [n for n in picked if loaded[n] is None]
     if not_ready:
         st.warning(
             f"Skipped {', '.join(not_ready)}: no episodes yet (still training?) or "
@@ -387,6 +453,15 @@ no_rounds = any(r.rounds is None for r in runs)
 
 TOP_JOKERS_DEFAULT = 15
 top = TOP_JOKERS_DEFAULT  # the Jokers tab's slider; the export reads it even when that tab is shut
+# Deep link ?run=<name>&episode=<n> opens that episode in the Episode explorer
+if not st.session_state.get("_deep_link_read"):
+    st.session_state._deep_link_read = True
+    if st.query_params.get("run") in run_names:
+        st.session_state.explorer_run = st.query_params["run"]
+        st.session_state.main_tab = "Episode explorer"
+        if (ep := st.query_params.get("episode", "")).isdigit():
+            st.session_state.explorer_episode = int(ep)
+
 # Tabs report which one is open, so only the open tab builds its charts
 tabs = st.tabs(
     [
@@ -1198,20 +1273,108 @@ with tabs[6]:
             )
 
 # --- Episode explorer -----------------------------------------------------
+EPISODE_FILTERS = ("ep_decks", "ep_stakes", "ep_antes", "ep_outcome", "ep_jokers")
+
+
+def open_episode(episode: int) -> None:
+    """Show ``episode`` in the explorer, clearing filters that would hide it."""
+    for key in EPISODE_FILTERS:
+        st.session_state.pop(key, None)
+    st.session_state.explorer_episode = episode
+
+
+def open_selected_row() -> None:
+    rows = st.session_state.ep_table.selection.rows
+    if rows:
+        open_episode(st.session_state._ep_rows[rows[0]])
+
+
 with tabs[7]:
+    if not tabs[7].open:
+        for key in ("run", "episode"):  # the link belongs to the explorer
+            st.query_params.pop(key, None)
     if tabs[7].open:
         run_name = st.selectbox("Run", run_names, key="explorer_run")
         run = by_name[run_name]
         eps = run.episodes.set_index("episode")
         if need(eps, "episodes for this selection"):
+            ep_table = find.episode_table(run)
+            suggestions = find.suggested_episodes(ep_table)
+            st.markdown("**Suggested episodes** · hover for why")
+            for start in range(0, len(suggestions), 4):
+                for col, sug in zip(st.columns(4), suggestions[start : start + 4], strict=False):
+                    col.button(
+                        f"{sug.label}: {sug.episode}",
+                        help=sug.reason,
+                        on_click=open_episode,
+                        args=(sug.episode,),
+                        key=f"suggest_{sug.label}",
+                        width="stretch",
+                    )
+
+            with st.expander("Filter episodes"):
+                f1, f2, f3 = st.columns(3)
+                deck_opts = sorted(ep_table["deck"].unique())
+                stake_opts = sorted(ep_table["stake"].unique())
+                f_decks = f1.multiselect(
+                    "Deck", deck_opts, key="ep_decks", placeholder="All", format_func=names.deck
+                )
+                f_stakes = f2.multiselect(
+                    "Stake", stake_opts, key="ep_stakes", placeholder="All", format_func=names.stake
+                )
+                outcome = f3.radio("Outcome", find.OUTCOMES, key="ep_outcome", horizontal=True)
+                lo, hi = int(ep_table["ante"].min()), int(ep_table["ante"].max())
+                antes = (
+                    st.slider("Ante reached", lo, hi, (lo, hi), key="ep_antes") if lo < hi else None
+                )
+                held = sorted({j for js in ep_table.get("final_jokers", []) for j in js})
+                f_jokers = st.multiselect(
+                    "Ended holding",
+                    held,
+                    key="ep_jokers",
+                    placeholder="Any jokers",
+                    format_func=names.item,
+                )
+            shown_eps = find.filter_episode_table(
+                ep_table, f_decks or None, f_stakes or None, antes, outcome, f_jokers
+            )
+            st.caption(
+                f"{len(shown_eps)} of {len(ep_table)} episodes · click a row to open it, "
+                "a header to sort"
+            )
+            st.session_state._ep_rows = shown_eps["episode"].tolist()
+            icon_table(
+                shown_eps,
+                ["final_jokers"],
+                {"lost_to": "blind"},
+                column_config={
+                    names.column("score_vs_target"): st.column_config.NumberColumn(
+                        format="percent",
+                        help="Lost episodes: score ÷ target on the blind that ended the run",
+                    )
+                },
+                on_select=open_selected_row,
+                selection_mode="single-row",
+                key="ep_table",
+                height=280,
+            )
+
+            options = shown_eps["episode"].tolist()
+            if not options:
+                st.caption("No episodes match the filters: choosing from all of them.")
+                options = eps.index.tolist()
+            if st.session_state.get("explorer_episode") not in options:
+                st.session_state.explorer_episode = options[0]
             episode = st.selectbox(
                 "Episode",
-                eps.index.tolist(),
+                options,
+                key="explorer_episode",
                 format_func=lambda e: (
                     f"{e}  ({names.deck(eps.loc[e, 'deck'])}, ante {eps.loc[e, 'ante']}, "
                     f"{eps.loc[e, 'shop_steps']} shop steps)"
                 ),
             )
+            st.query_params.update(run=run_name, episode=str(episode))
             row = eps.loc[episode]
             deck_col, stats_col = st.columns([1, 6])
             with deck_col:
