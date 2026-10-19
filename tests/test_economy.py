@@ -47,6 +47,14 @@ def test_spend_and_income(run):
     assert inc.loc["Interest", "kind"] == "cash-out"
 
 
+def test_spend_by_ante_per_episode_that_reached_it(run):
+    """Only ep0 reaches the ante-2 shop: its $6 is $6 per episode there, not $2."""
+    s = economy.spend_by_category([run], by_ante=True).set_index(["ante", "category"])
+    assert s.loc[(2, "Jokers"), "per_episode"] == pytest.approx(6)
+    assert s.loc[(1, "Jokers"), "per_episode"] == pytest.approx(14 / 2)  # ep0, ep1
+    assert economy.spend_by_category([run]).iloc[0]["per_episode"] == pytest.approx(20 / 3)
+
+
 def test_money_by_round(run):
     m = economy.money_by_round([run])
     r1 = m[(m["round"] == 1) & (m["when"] == "entry")].iloc[0]

@@ -197,18 +197,24 @@ def money_by_round(runs: list[Run]) -> pd.DataFrame:
 
 
 def spend_by_category(runs: list[Run], by_ante: bool = False) -> pd.DataFrame:
-    """Total and share of shop spending per category (optionally per ante)."""
+    """Total and share of shop spending per category (optionally per ante).
+
+    ``per_episode`` is per episode of the run, or with ``by_ante`` per episode
+    that reached that ante's shop (so late antes aren't diluted by early deaths).
+    """
     frames = []
     for r in runs:
         s = steps_with_money(r)
         if s.empty:
             continue
+        reached = s.groupby("ante")["episode"].nunique()
         s = s[s["category"].isin(BUY_CATEGORIES) & (s["spent"] > 0)]
         keys = ["ante", "category"] if by_ante else ["category"]
         g = s.groupby(keys, as_index=False)["spent"].sum()
         totals = g.groupby("ante")["spent"].transform("sum") if by_ante else g["spent"].sum()
         g["share"] = g["spent"] / totals
-        g["per_episode"] = g["spent"] / max(len(r.episodes), 1)
+        n = g["ante"].map(reached) if by_ante else max(len(r.episodes), 1)
+        g["per_episode"] = g["spent"] / n
         frames.append(g.assign(run=r.name))
     return _concat(frames)
 
