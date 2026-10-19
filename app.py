@@ -267,9 +267,23 @@ with st.sidebar:
         files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
         return max(f.stat().st_mtime for f in files if f.is_file())
 
-    runs = [
-        cached_run(str(run_dirs[n]), str(root), run_mtime(run_dirs[n]), pkg_mtime) for n in picked
-    ]
+    runs, not_ready = [], []
+    for n in picked:
+        try:
+            run = cached_run(str(run_dirs[n]), str(root), run_mtime(run_dirs[n]), pkg_mtime)
+        except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
+            run = None
+        if run is None or run.episodes.empty:
+            not_ready.append(n)
+        else:
+            runs.append(run)
+    if not_ready:
+        st.warning(
+            f"Skipped {', '.join(not_ready)}: no episodes yet (still training?) or "
+            "unreadable. **Reload runs** once it has logged some."
+        )
+    if not runs:
+        st.stop()
     train_runs = runs
 
     # Eval episodes (greedy, fixed seeds) replace the training episodes in every tab

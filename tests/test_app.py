@@ -165,6 +165,20 @@ def test_app_no_runs(tmp_path):
     assert at.sidebar.warning
 
 
+def test_app_skips_run_still_starting(tmp_path):
+    """A run whose episodes.csv is still empty doesn't break the others."""
+    from conftest import RUNS_DIR
+
+    shutil.copytree(RUNS_DIR / "run_small", tmp_path / "run_small")
+    (tmp_path / "training").mkdir()
+    (tmp_path / "training" / "episodes.csv").touch()
+    at = _run(tmp_path)
+    assert not at.exception
+    assert any("training" in w.value for w in at.sidebar.warning)
+    assert at.sidebar.multiselect[0].value == ["run_small", "training"]
+    assert [t.label for t in at.tabs][: len(TABS)] == TABS
+
+
 def test_names_toggle(runs_dir):
     at = _run(runs_dir, tab="Episode explorer")
     assert "Red Deck" in _episode_box(at).options[0]
