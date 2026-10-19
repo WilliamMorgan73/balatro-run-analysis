@@ -1,10 +1,11 @@
-"""Joker, deck and blind icons cut from the player's own copy of Balatro.
+"""Joker, consumable, voucher, pack, deck and blind icons cut from the player's
+own copy of Balatro.
 
 No game art is stored in this repo. ``Balatro.exe`` (or ``Balatro.love``) is a
 LÖVE zip archive; its sprite atlases live at
-``resources/textures/{1,2}x/{Jokers,Enhancers}.png`` in 71x95 cells (x scale);
-blind chips are in ``BlindChips.png``, 34x34 cells, one animation per row (the
-first frame is used).
+``resources/textures/{1,2}x/{Jokers,Tarots,Vouchers,boosters,Enhancers}.png`` in
+71x95 cells (x scale); blind chips are in ``BlindChips.png``, 34x34 cells, one
+animation per row (the first frame is used).
 """
 
 from __future__ import annotations
@@ -22,7 +23,17 @@ from balatro_analysis.catalog import blinds, centers
 
 CELL = (71, 95)
 CELLS = {"Blind": (34, 34)}  # sets whose cells aren't CELL
-ATLASES = {"Joker": "Jokers.png", "Back": "Enhancers.png", "Blind": "BlindChips.png"}
+ATLASES = {
+    "Joker": "Jokers.png",
+    "Tarot": "Tarots.png",  # tarots, planets and spectrals share one atlas
+    "Planet": "Tarots.png",
+    "Spectral": "Tarots.png",
+    "Voucher": "Vouchers.png",
+    "Booster": "boosters.png",
+    "Back": "Enhancers.png",
+    "Blind": "BlindChips.png",
+}
+STRIP_GAP = 4  # px between icons in a strip, at scale 1
 ARCHIVE_NAMES = ("Balatro.exe", "Balatro.love", "Balatro")
 
 STEAM_ROOTS = (
@@ -80,6 +91,7 @@ class Sprites:
         self.scale = scale
         self._atlases: dict[str, Image.Image | None] = {}
         self._icons: dict[str, bytes | None] = {}
+        self._strips: dict[tuple[str, ...], bytes | None] = {}
 
     def _atlas(self, set_name: str) -> Image.Image | None:
         if set_name not in self._atlases:
@@ -126,5 +138,37 @@ class Sprites:
         return buf.getvalue()
 
     def data_uri(self, key: str | None) -> str | None:
-        data = self.png(key)
-        return "data:image/png;base64," + base64.b64encode(data).decode() if data else None
+        return _uri(self.png(key))
+
+    def strip_png(self, keys: list[str] | tuple[str, ...]) -> bytes | None:
+        """PNG of the icons of ``keys`` side by side (keys without an icon are left
+        out), or None if none has one.  For a table cell showing a whole hand of
+        jokers or consumables."""
+        keys = tuple(keys)
+        if keys not in self._strips:
+            self._strips[keys] = self._render_strip(keys)
+        return self._strips[keys]
+
+    def strip_uri(self, keys: list[str] | tuple[str, ...]) -> str | None:
+        return _uri(self.strip_png(keys))
+
+    def _render_strip(self, keys: tuple[str, ...]) -> bytes | None:
+        icons = [Image.open(io.BytesIO(p)) for p in map(self.png, keys) if p]
+        if not icons:
+            return None
+        gap = STRIP_GAP * self.scale
+        height = max(i.height for i in icons)
+        strip = Image.new(
+            "RGBA", (sum(i.width for i in icons) + gap * (len(icons) - 1), height), (0, 0, 0, 0)
+        )
+        x = 0
+        for icon in icons:
+            strip.paste(icon, (x, height - icon.height))
+            x += icon.width + gap
+        buf = io.BytesIO()
+        strip.save(buf, format="PNG")
+        return buf.getvalue()
+
+
+def _uri(data: bytes | None) -> str | None:
+    return "data:image/png;base64," + base64.b64encode(data).decode() if data else None

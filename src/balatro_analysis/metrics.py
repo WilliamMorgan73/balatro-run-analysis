@@ -491,6 +491,24 @@ def episode_timeline(run: Run, episode: int) -> pd.DataFrame:
 
 
 def episode_rounds(run: Run, episode: int) -> pd.DataFrame:
+    """The episode's blinds, with the jokers and consumables held entering each one.
+
+    Those come from the shop visit before the blind: its last decision is leaving
+    the shop, which changes nothing, so its ``*_before`` lists are what was held
+    walking into the next blind (after any pack picks).  The first blind comes
+    before any shop, so it has none (a deck's starting consumables aren't logged).
+    """
     if run.rounds is None:
         return pd.DataFrame()
-    return run.rounds[run.rounds["episode"] == episode].reset_index(drop=True)
+    rounds = run.rounds[run.rounds["episode"] == episode].reset_index(drop=True)
+    if run.steps is None or not {"jokers_before", "consumables_before"} <= set(run.steps):
+        return rounds
+    s = run.steps[run.steps["episode"] == episode].sort_values("step")
+    last = s.groupby("round").tail(1).set_index("round")  # leaving each shop
+    for col, src in (("jokers", "jokers_before"), ("consumables", "consumables_before")):
+        if col in rounds:  # logged directly by a newer harness
+            continue
+        rounds[col] = [
+            last.at[r - 1, src] if r - 1 in last.index else None for r in rounds["round"]
+        ]
+    return rounds

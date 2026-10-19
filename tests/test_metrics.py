@@ -83,6 +83,15 @@ def test_episode_views(run):
     assert len(metrics.episode_rounds(run, 0)) == 3
 
 
+def test_episode_rounds_held_entering_each_blind(run):
+    """What was held leaving the shop before each blind; none before the first."""
+    r = metrics.episode_rounds(run, 0)
+    assert r["round"].tolist() == [1, 2, 4]
+    assert r["jokers"].tolist() == [None, ["j_joker"], ["j_joker", "j_greedy_joker"]]
+    assert r["consumables"].tolist() == [None, [], []]
+    assert metrics.episode_rounds(run, 1)["jokers"].tolist() == [["j_banner"]]
+
+
 def test_metrics_without_step_logs(episodes_only_dir):
     runs = load_runs(episodes_only_dir)
     run = runs[0]
