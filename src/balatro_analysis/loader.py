@@ -12,6 +12,7 @@ columns).  It is loaded as ``Run.eval`` rather than listed as a run of its own.
 
 from __future__ import annotations
 
+import io
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,10 +54,20 @@ def find_runs(root: str | Path) -> list[Path]:
     )
 
 
+def _complete_lines(path: Path) -> str:
+    """The file's text without an unterminated last line: a run that is still
+    training may be mid-way through writing it."""
+    text = path.read_text()
+    return text if text.endswith("\n") else text[: text.rfind("\n") + 1]
+
+
 def _read_jsonl(path: Path) -> pd.DataFrame | None:
-    if not path.is_file() or path.stat().st_size == 0:
+    if not path.is_file():
         return None
-    return pd.read_json(path, lines=True)
+    text = _complete_lines(path)
+    if not text.strip():
+        return None
+    return pd.read_json(io.StringIO(text), lines=True)
 
 
 def load_run(path: str | Path, root: str | Path | None = None) -> Run:
@@ -72,11 +83,13 @@ def load_run(path: str | Path, root: str | Path | None = None) -> Run:
     run = _load_tables(path, name, config)
     if (path / EVAL_DIR / "episodes.csv").is_file():
         run.eval = _load_tables(path / EVAL_DIR, name, config)
+        if run.eval.episodes.empty:  # first eval round still being played
+            run.eval = None
     return run
 
 
 def _load_tables(path: Path, name: str, config: dict) -> Run:
-    episodes = pd.read_csv(path / "episodes.csv")
+    episodes = pd.read_csv(io.StringIO(_complete_lines(path / "episodes.csv")))
     if "final_jokers" in episodes:
         episodes["final_jokers"] = episodes["final_jokers"].fillna("").astype(str)
 
