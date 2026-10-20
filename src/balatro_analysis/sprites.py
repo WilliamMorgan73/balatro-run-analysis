@@ -91,6 +91,7 @@ class Sprites:
         self.scale = scale
         self._atlases: dict[str, Image.Image | None] = {}
         self._icons: dict[str, bytes | None] = {}
+        self._images: dict[str, Image.Image | None] = {}  # decoded icons, for strips
         self._strips: dict[tuple[str, ...], bytes | None] = {}
 
     def _atlas(self, set_name: str) -> Image.Image | None:
@@ -153,7 +154,7 @@ class Sprites:
         return _uri(self.strip_png(keys))
 
     def _render_strip(self, keys: tuple[str, ...]) -> bytes | None:
-        icons = [Image.open(io.BytesIO(p)) for p in map(self.png, keys) if p]
+        icons = [i for i in map(self._image, keys) if i is not None]
         if not icons:
             return None
         gap = STRIP_GAP * self.scale
@@ -166,8 +167,14 @@ class Sprites:
             strip.paste(icon, (x, height - icon.height))
             x += icon.width + gap
         buf = io.BytesIO()
-        strip.save(buf, format="PNG")
+        strip.save(buf, format="PNG", compress_level=1)  # hundreds per table: favour speed
         return buf.getvalue()
+
+    def _image(self, key: str) -> Image.Image | None:
+        if key not in self._images:
+            data = self.png(key)
+            self._images[key] = Image.open(io.BytesIO(data)).convert("RGBA") if data else None
+        return self._images[key]
 
 
 def _uri(data: bytes | None) -> str | None:

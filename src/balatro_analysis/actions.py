@@ -17,7 +17,7 @@ import pandas as pd
 from scipy import stats as sps
 
 from balatro_analysis import metrics, stats
-from balatro_analysis.loader import Run
+from balatro_analysis.loader import Run, memo
 
 FAMILIES = [
     "Buy card",
@@ -73,8 +73,10 @@ def family(action_name: str) -> str:
     return action_name
 
 
-def _bracket(dollars: float) -> str:
-    return MONEY_BRACKETS[int(min(max(dollars, 0) // 5, len(MONEY_BRACKETS) - 1))]
+def _binned(codes, labels: list[str]) -> pd.Categorical:
+    """Ordered categorical of ``labels[code]``, codes clipped into range."""
+    codes = np.clip(np.asarray(codes, dtype=float), 0, len(labels) - 1).astype(int)
+    return pd.Categorical.from_codes(codes, labels, ordered=True)
 
 
 def steps_with_context(run: Run) -> pd.DataFrame:
@@ -82,32 +84,29 @@ def steps_with_context(run: Run) -> pd.DataFrame:
     ``visit_len``, ``money_bracket``, ``jokers_held`` and ``next_blind``."""
     if run.steps is None or run.steps.empty:
         return pd.DataFrame()
+    return memo(run, "steps_with_context", lambda: _steps_with_context(run))
+
+
+def _steps_with_context(run: Run) -> pd.DataFrame:
     s = run.steps.sort_values(["episode", "step"]).reset_index(drop=True)
-    s["family"] = s["action_name"].map(family)
+    names = s["action_name"]
+    s["family"] = names.map({a: family(a) for a in names.unique()})
     s["position"] = s.groupby(VISIT).cumcount() + 1
     s["visit_len"] = s.groupby(VISIT)["step"].transform("size")
-    s["position_bin"] = pd.Categorical(
-        [POSITIONS[min(p, MAX_POSITION) - 1] for p in s["position"]], POSITIONS, ordered=True
-    )
-    s["money_bracket"] = pd.Categorical(
-        s["dollars_before"].map(_bracket), MONEY_BRACKETS, ordered=True
-    )
+    s["position_bin"] = _binned(s["position"] - 1, POSITIONS)
+    s["money_bracket"] = _binned(s["dollars_before"] // 5, MONEY_BRACKETS)
     if "jokers_before" in s:
         held = s["jokers_before"].map(lambda v: len(v) if isinstance(v, list) else 0)
-        s["jokers_held"] = pd.Categorical(
-            [JOKERS_HELD[min(n, 5)] for n in held], JOKERS_HELD, ordered=True
-        )
+        s["jokers_held"] = _binned(held, JOKERS_HELD)
     if "blind_on_deck" in s:
         s["next_blind"] = pd.Categorical(s["blind_on_deck"], NEXT_BLIND, ordered=True)
     return s
 
 
 def _visits(s: pd.DataFrame) -> pd.DataFrame:
-    """One row per visit: its ordered actions and ante."""
+    """One row per visit: its ante and number of decisions."""
     return s.groupby(VISIT, as_index=False).agg(
         ante=("ante", "first"),
-        actions=("action_name", list),
-        families=("family", list),
         decisions=("step", "size"),
     )
 
@@ -139,7 +138,7 @@ def decisions_per_visit(runs: list[Run]) -> pd.DataFrame:
         s = steps_with_context(r)
         if s.empty:
             continue
-        v = _visits(s)[[*VISIT, "ante", "decisions"]]
+        v = _visits(s)
         frames.append(v.assign(run=r.name))
     return _concat(frames)
 
@@ -152,21 +151,32 @@ def visit_summary(runs: list[Run]) -> pd.DataFrame:
         s = steps_with_context(r)
         if s.empty:
             continue
-        v = _visits(s)
-        firsts = v["actions"].str[0].value_counts()
-
-        def has(fams, prefix):
-            return any(f.startswith(prefix) for f in fams)
-
+        fam = s["family"]
+        v = (
+            s.assign(
+                buy=fam.str.startswith("Buy"),
+                sell=fam.str.startswith("Sell"),
+                reroll=fam == "Reroll",
+            )
+            .groupby(VISIT)
+            .agg(
+                first=("action_name", "first"),
+                decisions=("step", "size"),
+                buy=("buy", "any"),
+                sell=("sell", "any"),
+                reroll=("reroll", "any"),
+            )
+        )
+        firsts = v["first"].value_counts()
         rows.append(
             {
                 "run": r.name,
                 "visits": len(v),
                 "decisions_per_visit": v["decisions"].mean(),
-                "leave_at_once": (v["actions"].str[0] == "skip").mean(),
-                "with_buy": v["families"].map(lambda f: has(f, "Buy")).mean(),
-                "with_sell": v["families"].map(lambda f: has(f, "Sell")).mean(),
-                "with_reroll": v["families"].map(lambda f: "Reroll" in f).mean(),
+                "leave_at_once": (v["first"] == "skip").mean(),
+                "with_buy": v["buy"].mean(),
+                "with_sell": v["sell"].mean(),
+                "with_reroll": v["reroll"].mean(),
                 "top_first_action": firsts.index[0],
                 "top_first_share": firsts.iloc[0] / len(v),
             }
@@ -240,7 +250,12 @@ def top_sequences(run: Run, n: int = 15) -> pd.DataFrame:
     s = steps_with_context(run)
     if s.empty:
         return pd.DataFrame()
-    seqs = _visits(s)["actions"].map(tuple)
+    # visits are contiguous after the sort in steps_with_context: one tuple per run of rows
+    starts = np.flatnonzero(s[VISIT].ne(s[VISIT].shift()).any(axis=1))
+    names = s["action_name"].tolist()
+    seqs = pd.Series(
+        [tuple(names[a:b]) for a, b in zip(starts, [*starts[1:], len(s)], strict=True)]
+    )
     counts = seqs.value_counts()
     out = pd.DataFrame(
         {

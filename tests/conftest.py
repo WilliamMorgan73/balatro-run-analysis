@@ -26,6 +26,12 @@ def no_real_game(monkeypatch, tmp_path):
     monkeypatch.setenv("BALATRO_PATH", str(tmp_path / "no-balatro-here"))
 
 
+@pytest.fixture(autouse=True)
+def private_run_cache(monkeypatch, tmp_path):
+    """Never read or write the developer's real run cache in tests."""
+    monkeypatch.setenv("BALATRO_ANALYSIS_CACHE", str(tmp_path / "run-cache"))
+
+
 @pytest.fixture
 def runs_dir() -> Path:
     return RUNS_DIR

@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from balatro_analysis import catalog
-from balatro_analysis.loader import Run
+from balatro_analysis.loader import Run, memo
 
 BUY_ACTIONS = ("buy_card_0", "buy_card_1", "buy_pack_0", "buy_pack_1", "buy_voucher")
 SELL_JOKER_PREFIX = "sell_joker_"
@@ -221,8 +221,12 @@ def joker_purchases(run: Run) -> pd.DataFrame:
     """Shop steps that bought a joker (``item_key`` starts with ``j_``)."""
     if run.steps is None or run.steps.empty:
         return pd.DataFrame(columns=["episode", "ante", "item_key"])
-    s = run.steps
-    bought = s["action_name"].isin(BUY_ACTIONS) & s["item_key"].map(catalog.is_joker)
+    return memo(run, "joker_purchases", lambda: _joker_purchases(run.steps))
+
+
+def _joker_purchases(s: pd.DataFrame) -> pd.DataFrame:
+    jokers = [k for k in s["item_key"].unique() if catalog.is_joker(k)]
+    bought = s["action_name"].isin(BUY_ACTIONS) & s["item_key"].isin(jokers)
     return s.loc[bought, ["episode", "step", "ante", "round", "item_key", "item_cost"]]
 
 
