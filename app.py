@@ -601,11 +601,23 @@ RUN_SHEETS = 6  # run sheets shown before the rest fold away
 def run_sheets() -> None:
     """Each selected run as the game's run-over screen, with buttons into its best
     and worst episode: where to start reading."""
-    ci = stats.summary_ci(runs)
+    # A run can have no episodes under the filters, e.g. one still training that
+    # hasn't played the chosen eval round yet
+    sheet_runs = [r for r in runs if not r.episodes.empty]
+    if empty := [r.name for r in runs if r.episodes.empty]:
+        st.caption(
+            "No episodes under the current filters, not shown: "
+            + ", ".join(empty)
+            + "."
+            + (" Still training? Try an earlier eval round under Filter." if eval_mode else "")
+        )
+    if not sheet_runs:
+        return
+    ci = stats.summary_ci(sheet_runs)
     ci = ci[ci["outcome"] == "ante reached"].set_index("run") if len(ci) else ci
-    means = {r.name: r.episodes["ante"].mean() for r in runs}
-    best_run = max(means, key=means.get) if len(runs) > 1 else None
-    ranked = sorted(runs, key=lambda r: -means[r.name])  # best first
+    means = {r.name: r.episodes["ante"].mean() for r in sheet_runs}
+    best_run = max(means, key=means.get) if len(sheet_runs) > 1 else None
+    ranked = sorted(sheet_runs, key=lambda r: -means[r.name])  # best first
     shown, rest = ranked[:RUN_SHEETS], ranked[RUN_SHEETS:]
     run_sheet_grid(shown, ci, means, best_run)
     if rest:

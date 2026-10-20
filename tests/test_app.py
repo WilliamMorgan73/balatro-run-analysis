@@ -571,3 +571,16 @@ def test_run_sheet_opens_best_episode(runs_dir):
     at.button(key="sheet_best_run_small").click().run()
     assert not at.exception
     assert at.session_state["main_tab"] == "Episode explorer" and _episode(at) == 0
+
+
+def test_overview_with_a_run_behind_on_eval_rounds(eval_runs_dir):
+    """A run still training hasn't played the last eval round yet: it has no
+    episodes under the default eval round, and every tab must still render."""
+    e = eval_runs_dir / "run_b" / "eval" / "episodes.csv"
+    lines = e.read_text().splitlines()
+    e.write_text("\n".join(lines[:4]) + "\n")  # header + eval round 0 only
+    for tab in TABS:
+        at = _eval_app(eval_runs_dir, tab)
+        assert not at.exception, (tab, at.exception)
+    at = _eval_app(eval_runs_dir, "Overview")
+    assert any("not shown: run_b" in c.value for c in at.caption)
