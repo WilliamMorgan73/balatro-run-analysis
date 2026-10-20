@@ -18,6 +18,11 @@ dialog: kdialog, zenity, or Tk as a fallback) or type a path. Pick any number of
 to overlay, filter by deck and stake, and use **Reload runs** after a training run
 finishes.
 
+Loaded runs are cached in `~/.cache/balatro-analysis` (or `$XDG_CACHE_HOME`), roughly
+10–30 MB per run, so later starts skip parsing the logs; a run is parsed again when its
+files change. Set `BALATRO_ANALYSIS_CACHE` to use another folder, or to `0` to turn
+the cache off. Deleting the folder is always safe.
+
 ## Producing runs
 
 The dashboard reads what these scripts write inside a jackdaw-balatro checkout:

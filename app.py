@@ -20,6 +20,7 @@ RELOAD_ORDER = [
     "catalog",
     "names",
     "loader",
+    "runcache",
     "metrics",
     "economy",
     "actions",
@@ -63,10 +64,11 @@ from balatro_analysis import (  # noqa: E402
     find,
     metrics,
     plots,
+    runcache,
     stats,
 )
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
-from balatro_analysis.loader import Run, find_runs, load_run  # noqa: E402
+from balatro_analysis.loader import Run, find_runs  # noqa: E402
 from balatro_analysis.names import Names, split_items  # noqa: E402
 from balatro_analysis.picker import PickerUnavailable, pick_directory  # noqa: E402
 from balatro_analysis.sprites import Sprites, find_balatro, game_archive  # noqa: E402
@@ -89,8 +91,22 @@ def cli_runs_dir() -> Path:
 # run (hundreds of MB) on each rerun.  Nothing writes to it; tabs filter copies.
 @st.cache_resource(show_spinner="Loading run…", max_entries=256)
 def cached_run(path: str, root: str, mtime: float, pkg_mtime: float) -> Run:
-    # mtime: re-written runs reload; pkg_mtime: never reuse Runs from old code
-    return load_run(path, root)
+    # mtime: re-written runs reload; pkg_mtime: never reuse Runs from old code.
+    # Runs unchanged since a previous session come from the disk cache.
+    return runcache.load_run_cached(path, root, runcache.cache_dir())
+
+
+@st.cache_resource(max_entries=128)
+def cached_filtered(
+    _run: Run, key: tuple, start: float, end: float, decks: tuple, stakes: tuple, rounds
+) -> Run:
+    """``metrics.filter_episodes``, kept across reruns: the same filters give the
+    same Run, so what tabs memoise on it (``loader.memo``) is computed once.
+    ``key`` identifies ``_run`` (not hashed): its path, mtime and the code mtime."""
+    rounds = list(rounds) if rounds is not None else None
+    return metrics.filter_episodes(
+        _run, start, end, decks=list(decks), stakes=list(stakes), eval_rounds=rounds
+    )
 
 
 @st.cache_resource(show_spinner="Checking chart export…")
@@ -232,6 +248,7 @@ def modal_html(markup: str) -> None:
     st.html(markup, unsafe_allow_javascript=True)
 
 
+@functools.cache  # once per script run: several tables and grids ask for it
 def joker_cards() -> list[collection.JokerCard]:
     """Every joker as a collection card, with stats from the selected runs."""
     return collection.build_cards(
@@ -455,6 +472,7 @@ with st.sidebar:
     window = st.slider("Rolling window", 1, max(2, max_ep + 1), min(50, max_ep + 1))
     if st.button("Reload runs"):
         cached_run.clear()
+        cached_filtered.clear()
         st.rerun()
 
     with st.expander("Game assets (icons)"):
@@ -469,15 +487,22 @@ with st.sidebar:
 
     export_area = st.container()  # filled at the end, once every chart is registered
 
-runs = [
-    metrics.filter_episodes(r, *ep_range, decks=decks, stakes=stakes, eval_rounds=eval_rounds)
-    for r in runs
-]
-eval_runs = [
-    metrics.filter_episodes(r.eval, 0, float("inf"), decks=decks, stakes=stakes)
-    for r in train_runs
-    if r.eval is not None
-]
+
+def filtered(r: Run, start: float, end: float, rounds: list[int] | None = None) -> Run:
+    key = (str(r.path), run_mtime(run_dirs[r.name]), pkg_mtime)
+    return cached_filtered(
+        r,
+        key,
+        start,
+        end,
+        tuple(decks),
+        tuple(stakes),
+        tuple(rounds) if rounds is not None else None,
+    )
+
+
+runs = [filtered(r, *ep_range, eval_rounds) for r in runs]
+eval_runs = [filtered(r.eval, 0, float("inf")) for r in train_runs if r.eval is not None]
 run_names = [r.name for r in runs]
 by_name = {r.name: r for r in runs}
 no_steps = any(r.steps is None for r in runs)

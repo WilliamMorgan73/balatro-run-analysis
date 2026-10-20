@@ -13,7 +13,7 @@ import pandas as pd
 from scipy import stats as sps
 
 from balatro_analysis import metrics
-from balatro_analysis.loader import Run
+from balatro_analysis.loader import Run, memo
 
 LEVEL = 0.95
 N_BOOT = 2000
@@ -116,29 +116,35 @@ def eval_curve(runs: list[Run]) -> pd.DataFrame:
     """Per run and eval round: training episodes done so far, eval games, mean ante
     with a bootstrap CI and win rate with a Wilson CI.  ``runs`` are eval runs
     (episodes with ``eval_round`` / ``train_episodes``); others are skipped."""
+    frames = [
+        memo(r, "eval_curve", lambda r=r: _eval_curve(r))
+        for r in runs
+        if not r.episodes.empty and "eval_round" in r.episodes
+    ]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def _eval_curve(r: Run) -> pd.DataFrame:
+    """``eval_curve`` for one eval run."""
     rows = []
-    for r in runs:
-        e = r.episodes
-        if e.empty or "eval_round" not in e:
-            continue
-        for rnd, g in e.groupby("eval_round"):
-            ante, won = g["ante"].astype(float), g["won"].astype(int)
-            lo, hi = bootstrap_ci(ante)
-            w_lo, w_hi = wilson_ci(int(won.sum()), len(won))
-            rows.append(
-                {
-                    "run": r.name,
-                    "eval_round": int(rnd),
-                    "train_episodes": int(g["train_episodes"].iloc[0]),
-                    "games": len(g),
-                    "mean ante": ante.mean(),
-                    "mean ante low": lo,
-                    "mean ante high": hi,
-                    "win rate": won.mean(),
-                    "win rate low": w_lo,
-                    "win rate high": w_hi,
-                }
-            )
+    for rnd, g in r.episodes.groupby("eval_round"):
+        ante, won = g["ante"].astype(float), g["won"].astype(int)
+        lo, hi = bootstrap_ci(ante)
+        w_lo, w_hi = wilson_ci(int(won.sum()), len(won))
+        rows.append(
+            {
+                "run": r.name,
+                "eval_round": int(rnd),
+                "train_episodes": int(g["train_episodes"].iloc[0]),
+                "games": len(g),
+                "mean ante": ante.mean(),
+                "mean ante low": lo,
+                "mean ante high": hi,
+                "win rate": won.mean(),
+                "win rate low": w_lo,
+                "win rate high": w_hi,
+            }
+        )
     return pd.DataFrame(rows)
 
 
