@@ -23,7 +23,15 @@ from balatro_analysis import loader
 from balatro_analysis.loader import EVAL_DIR, Run, load_run
 
 ENV = "BALATRO_ANALYSIS_CACHE"
-SOURCES = ("episodes.csv", "config.json", "steps.jsonl", "rounds.jsonl", "shops.jsonl")
+SOURCES = (
+    "episodes.csv",
+    "config.json",
+    "steps.jsonl",
+    "rounds.jsonl",
+    "shops.jsonl",
+    "hands.jsonl",
+    "decks.jsonl",
+)
 
 
 def cache_dir() -> Path | None:

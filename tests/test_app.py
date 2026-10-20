@@ -17,6 +17,7 @@ TABS = [
     "Jokers",
     "Joker collection",
     "Rounds",
+    "Hands",
     "Episode explorer",
 ]
 ECON_TABS = [
@@ -45,6 +46,7 @@ def _run(
     tab: str | None = None,
     econ: str | None = None,
     actions: str | None = None,
+    explorer: str | None = None,
 ) -> AppTest:
     """Run the app on ``runs_dir``; tabs render lazily, so pick the one to inspect."""
     at = AppTest.from_file(APP, default_timeout=60)
@@ -57,12 +59,25 @@ def _run(
         at.session_state["econ_tab"] = econ
     if actions:
         at.session_state["actions_tab"] = actions
+    if explorer:
+        at.session_state["explorer_view"] = explorer
     at.run()
     return at
 
 
-def _episode_box(at: AppTest):
-    return next(s for s in at.selectbox if s.label == "Episode")
+def _episode(at: AppTest) -> int:
+    """The episode open in the explorer."""
+    return at.session_state["explorer_episode"]
+
+
+def _header(at: AppTest) -> str:
+    return next(m.value for m in at.markdown if m.value.startswith("**Episode "))
+
+
+def _stepping(at: AppTest) -> tuple[int, int]:
+    """(position, count) of the open episode among those Previous/Next step through."""
+    pos, count = re.search(r"\((\d+) of (\d+)\)", _header(at)).groups()
+    return int(pos), int(count)
 
 
 def test_app_renders_default_tab(runs_dir):
@@ -95,6 +110,7 @@ def test_app_icons_with_game(runs_dir, fake_game):
     assert decks.count('<dialog class="dt-dialog"') == 2  # one modal per deck
     assert decks.count("data:image/png;base64,") >= 2  # deck art
     assert "+1 discard" in re.sub(r"<[^>]+>", "", decks)  # Red Deck's effect text from the game
+    assert "@font-face" in _html(_run(runs_dir, fake_game))  # the game's pixel font
     explorer = _html(_run(runs_dir, fake_game, tab="Episode explorer"))
     assert 'id="ex-deck-b_red"' in explorer  # episode 0's deck
     assert explorer.count('data-dialog="ex-jk-') == 2  # its two final jokers
@@ -131,13 +147,19 @@ def test_app_deck_filter(runs_dir):
     assert decks.value == ["b_blue", "b_red"]
     decks.set_value(["b_blue"]).run()
     assert not at.exception
-    assert _episode_box(at).options == ["1  (Blue Deck, ante 1, 4 shop steps)"]
+    assert _episode(at) == 1 and _stepping(at) == (1, 1)
+    assert any("Showing Blue Deck" in c.value for c in at.sidebar.caption)
 
 
-def test_app_episode_explorer_switch(runs_dir):
+def test_app_episode_explorer_previous_next(runs_dir):
     at = _run(runs_dir, tab="Episode explorer")
-    _episode_box(at).set_value(1).run()
+    assert _episode(at) == 0 and _stepping(at) == (1, 3)
+    assert at.button(key="ep_prev").disabled
+    at.button(key="ep_next").click().run()
     assert not at.exception
+    assert _episode(at) == 1 and _stepping(at) == (2, 3)
+    at.button(key="ep_prev").click().run()
+    assert _episode(at) == 0
 
 
 def test_app_browse_button(runs_dir, monkeypatch):
@@ -181,10 +203,10 @@ def test_app_skips_run_still_starting(tmp_path):
 
 def test_names_toggle(runs_dir):
     at = _run(runs_dir, tab="Episode explorer")
-    assert "Red Deck" in _episode_box(at).options[0]
+    assert "Red Deck" in _header(at)
     at.toggle(key="pretty").set_value(False).run()
     assert not at.exception
-    assert _episode_box(at).options[0] == "0  (b_red, ante 2, 4 shop steps)"
+    assert "b_red, 1, seed TEST_0" in _header(at)
     decks = next(m for m in at.sidebar.multiselect if m.label == "Decks")
     assert decks.format_func("b_red") == "b_red"
 
@@ -352,7 +374,7 @@ def test_app_eval_section_and_mode(eval_runs_dir):
     at = _run(eval_runs_dir)
     assert not at.exception
     assert any(r.label == "Eval metric" for r in at.radio)
-    at.sidebar.radio(key="phase").set_value("Evaluation").run()
+    at.sidebar.segmented_control(key="phase").set_value("Evaluation").run()
     assert not at.exception
     assert any(s.label == "Eval round" for s in at.sidebar.selectbox)
     assert any("eval episodes" in i.value for i in at.info)
@@ -360,7 +382,7 @@ def test_app_eval_section_and_mode(eval_runs_dir):
 
 def test_app_no_eval_switch_without_eval(runs_dir):
     at = _run(runs_dir)
-    assert not [r for r in at.sidebar.radio if r.label == "Episodes"]
+    assert not [r for r in at.sidebar.segmented_control if r.label == "Episodes"]
 
 
 @pytest.mark.parametrize("tab", TABS)
@@ -414,7 +436,7 @@ def test_chart_description_shown(runs_dir):
 def test_explorer_item_icons_open_details(runs_dir, fake_game, pretty):
     """Shop decisions and Blinds played are HTML tables whose item icons open the
     same modals as elsewhere; the episode finder keeps its sortable icon table."""
-    at = _run(runs_dir, fake_game, tab="Episode explorer")
+    at = _run(runs_dir, fake_game, tab="Episode explorer", explorer="Money & blinds")
     if not pretty:
         at.toggle(key="pretty").set_value(False).run()
     assert not at.exception
@@ -438,24 +460,24 @@ def test_explorer_item_icons_open_details(runs_dir, fake_game, pretty):
 
 def test_suggestion_opens_episode(runs_dir):
     at = _run(runs_dir, tab="Episode explorer")
-    _episode_box(at).set_value(2).run()
-    assert _episode_box(at).value == 2
-    labels = [b.label for b in at.button if b.key and b.key.startswith("suggest_")]
-    assert "Best: 0" in labels and any(lbl.startswith("Closest loss") for lbl in labels)
-    at.button(key="suggest_Best").click().run()
+    at.button(key="ep_next").click().run()
+    at.button(key="ep_next").click().run()
+    assert _episode(at) == 2
+    pills = next(b for b in at.get("button_group") if b.label == "Suggested episodes")
+    assert "Best: 0" in pills.options and "Closest loss: 0" in pills.options
+    pills.set_value("Best: 0").run()
     assert not at.exception
-    assert _episode_box(at).value == 0
+    assert _episode(at) == 0
 
 
 def test_episode_filters_narrow_the_choice(runs_dir):
     at = _run(runs_dir, tab="Episode explorer")
     at.multiselect(key="ep_decks").set_value(["b_blue"]).run()
     assert not at.exception
-    assert _episode_box(at).options == ["1  (Blue Deck, ante 1, 4 shop steps)"]
-    assert _episode_box(at).value == 1
+    assert _episode(at) == 1 and _stepping(at) == (1, 1)
     at.multiselect(key="ep_jokers").set_value(["j_joker"]).run()  # blue deck ep ended with Banner
     assert any("No episodes match" in c.value for c in at.caption)
-    assert len(_episode_box(at).options) == 3  # falls back to every episode
+    assert _stepping(at)[1] == 3  # falls back to every episode
 
 
 def test_deep_link_opens_episode(runs_dir):
@@ -466,8 +488,8 @@ def test_deep_link_opens_episode(runs_dir):
     at.run()
     assert not at.exception
     assert at.session_state["main_tab"] == "Episode explorer"
-    assert _episode_box(at).value == 2
-    _episode_box(at).set_value(1).run()
+    assert _episode(at) == 2
+    at.button(key="ep_prev").click().run()
     assert at.query_params["episode"] == "1"  # the URL follows the selection
 
 
@@ -488,3 +510,64 @@ def test_find_runs_keeps_hidden_selection(runs_dir, tmp_path):
     assert at.sidebar.multiselect[0].value == []
     next(b for b in at.sidebar.button if b.label == "All shown").click().run()
     assert at.sidebar.multiselect[0].value == ["run_copy"]  # only what the search shows
+
+
+# --- Hand log (eval only, log_version 7) ---------------------------------------
+
+
+def _eval_app(eval_runs_dir: Path, tab: str, game: Path | None = None) -> AppTest:
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["runs_dir"] = str(eval_runs_dir)
+    at.session_state["main_tab"] = tab
+    at.session_state["phase"] = "Evaluation"
+    if game is not None:
+        at.session_state["game_path"] = str(game)
+    at.run()
+    return at
+
+
+def test_hands_tab_needs_evaluation(eval_runs_dir):
+    at = _run(eval_runs_dir, tab="Hands")
+    assert not at.exception
+    assert any("Switch **Episodes** to **Evaluation**" in i.value for i in at.info)
+    assert not at.get("plotly_chart")
+
+
+def test_hands_tab_in_evaluation(eval_runs_dir):
+    at = _eval_app(eval_runs_dir, "Hands")
+    assert not at.exception
+    assert len(at.get("plotly_chart")) == 4  # hands, score, per blind, deck
+
+
+def test_replay_plays_a_blind(eval_runs_dir, fake_game):
+    at = _eval_app(eval_runs_dir, "Episode explorer", fake_game)
+    assert not at.exception
+    assert _episode(at) == 3  # the last eval round's first episode, which has a hand log
+    html = _html(at)
+    assert html.count('class="rp-act"') == 3  # small blind: a discard and two plays
+    assert "Flush" in html and "data:image/png;base64," in html  # card art from the game
+    blinds = at.segmented_control(key="ex_blind")
+    blinds.set_value(2).run()
+    assert not at.exception
+    assert _html(at).count('class="rp-act"') == 1
+    assert "Pair 2" in "".join(c.value for c in at.caption)  # hand levels under the deck
+
+
+def test_replay_without_hand_log_says_why(runs_dir):
+    at = _run(runs_dir, tab="Episode explorer")
+    assert any("only recorded for evaluation" in i.value for i in at.info)
+
+
+def test_shop_view(runs_dir, fake_game):
+    at = _run(runs_dir, fake_game, tab="Episode explorer", explorer="Shop")
+    assert not at.exception
+    html = _html(at)
+    assert "Shop after round" in html and "bought" in html
+
+
+def test_run_sheet_opens_best_episode(runs_dir):
+    at = _run(runs_dir)
+    assert "Mean ante" in _html(at)
+    at.button(key="sheet_best_run_small").click().run()
+    assert not at.exception
+    assert at.session_state["main_tab"] == "Episode explorer" and _episode(at) == 0

@@ -8,6 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from balatro_analysis.actions import FAMILIES
+from balatro_analysis.hands import HAND_TYPES as HAND_ORDER
 from balatro_analysis.names import Names
 
 TEMPLATE = "plotly_white"
@@ -810,3 +811,86 @@ def legal_counts(df: pd.DataFrame, names: Names) -> go.Figure:
     fig.update_xaxes(dtick=1)
     fig.update_yaxes(tickformat=".0%")
     return _fig(fig, yaxis_title="fraction of decisions")
+
+
+# ---------------------------------------------------------------------------
+# Hands (eval hand logs)
+# ---------------------------------------------------------------------------
+
+
+def hand_type_share(df: pd.DataFrame, names: Names) -> go.Figure:
+    """Share of each run's plays by hand type, best hand at the top."""
+    fig = px.bar(
+        df,
+        y="hand_type",
+        x="share",
+        color="run",
+        barmode="group",
+        orientation="h",
+        hover_data=["plays", "mean_score"],
+        labels=_labels(names, "hand_type", "share", "run", "plays", "mean_score"),
+        title="Hands played",
+    )
+    fig.update_xaxes(tickformat=".0%")
+    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(HAND_ORDER)))
+    return _fig(fig, yaxis_title="")
+
+
+def hand_type_score(df: pd.DataFrame, names: Names) -> go.Figure:
+    """Mean score of one play ÷ the blind's target, by hand type."""
+    fig = px.bar(
+        df,
+        y="hand_type",
+        x="mean_score_vs_target",
+        color="run",
+        barmode="group",
+        orientation="h",
+        hover_data=["plays", "mean_score"],
+        labels=_labels(names, "hand_type", "mean_score_vs_target", "run", "plays", "mean_score"),
+        title="Score of one play ÷ target",
+    )
+    fig.update_xaxes(tickformat=".0%")
+    fig.update_yaxes(categoryorder="array", categoryarray=list(reversed(HAND_ORDER)))
+    return _fig(fig, yaxis_title="")
+
+
+def blind_play(df: pd.DataFrame, names: Names) -> go.Figure:
+    """Mean hands played and discards used per blind, by ante."""
+    g = (
+        df.groupby(["run", "ante"])[["hands_played", "discards_used"]]
+        .mean()
+        .reset_index()
+        .melt(["run", "ante"], var_name="used", value_name="per_blind")
+    )
+    g["used"] = g["used"].map(names.column)
+    fig = px.line(
+        g,
+        x="ante",
+        y="per_blind",
+        color="run",
+        line_dash="used",
+        markers=True,
+        labels={**_labels(names, "ante", "run"), "per_blind": "Per blind", "used": ""},
+        title="Hands and discards used per blind",
+    )
+    fig.update_xaxes(dtick=1)
+    return _fig(fig)
+
+
+def deck_composition(df: pd.DataFrame, names: Names) -> go.Figure:
+    """Mean enhanced / editioned / sealed cards in the deck, by ante."""
+    g = df.melt(["run", "ante"], ["enhanced", "edition", "sealed"], "kind", "cards")
+    g["kind"] = g["kind"].map({"enhanced": "Enhanced", "edition": "With an edition",
+                               "sealed": "With a seal"})  # fmt: skip
+    fig = px.line(
+        g,
+        x="ante",
+        y="cards",
+        color="run",
+        line_dash="kind",
+        markers=True,
+        labels={**_labels(names, "ante", "run"), "cards": "Cards in the deck", "kind": ""},
+        title="Modified cards in the deck at each blind",
+    )
+    fig.update_xaxes(dtick=1)
+    return _fig(fig)

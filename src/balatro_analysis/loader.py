@@ -10,6 +10,8 @@ A run is a directory containing ``episodes.csv``, and optionally
 Runs made with ``--eval-every`` also have an ``eval/`` folder in the same format
 (greedy episodes on fixed seeds, with ``eval_round`` and ``train_episodes``
 columns).  It is loaded as ``Run.eval`` rather than listed as a run of its own.
+From ``log_version`` 7, ``eval/`` also has ``hands.jsonl`` (every play and
+discard) and ``decks.jsonl`` (the deck at the start of each blind).
 """
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ class Run:
     steps: pd.DataFrame | None = None
     rounds: pd.DataFrame | None = None
     shops: pd.DataFrame | None = None
+    hands: pd.DataFrame | None = None  # eval/ only, log_version 7
+    decks: pd.DataFrame | None = None  # eval/ only, log_version 7
     eval: Run | None = None  # greedy episodes on the fixed eval seeds, if logged
     # frames derived from this run's tables (see ``memo``), so the tables must not
     # change once read; a filtered or replace()d run starts empty
@@ -125,6 +129,8 @@ def _load_tables(path: Path, name: str, config: dict) -> Run:
     steps = _read_jsonl(path / "steps.jsonl")
     rounds = _read_jsonl(path / "rounds.jsonl")
     shops = _read_jsonl(path / "shops.jsonl")
+    hands = _read_jsonl(path / "hands.jsonl")
+    decks = _read_jsonl(path / "decks.jsonl")
     # v1 configs have no log_version; a run with no config at all is taken as current
     v1 = bool(config) and config.get("log_version", 1) < 2
     if rounds is not None and v1 and "blind_key" in rounds:
@@ -145,6 +151,8 @@ def _load_tables(path: Path, name: str, config: dict) -> Run:
         steps=steps,
         rounds=rounds,
         shops=shops,
+        hands=hands,
+        decks=decks,
     )
 
 

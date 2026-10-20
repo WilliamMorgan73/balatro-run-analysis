@@ -1,0 +1,27 @@
+# Balatro's own UI colours: the dark slate table, chips blue, mult red, money gold.
+# The game's pixel font is added at runtime from the player's install (theme.py).
+[theme]
+base = "dark"
+backgroundColor = "#2c3a3d"
+secondaryBackgroundColor = "#3a4c56"
+textColor = "#ffffff"
+primaryColor = "#fda200"
+borderColor = "#1d282e"
+linkColor = "#5fc4ff"
+redColor = "#fe5f55"
+blueColor = "#009dff"
+greenColor = "#4bc292"
+orangeColor = "#fda200"
+yellowColor = "#f3b958"
+violetColor = "#8867a5"
+baseRadius = "10px"
+buttonRadius = "10px"
+showWidgetBorder = true
+dataframeHeaderBackgroundColor = "#4f6367"
+dataframeHeaderTextColor = "#ffffff"
+dataframeBorderColor = "#1d282e"
+chartCategoricalColors = ["#009dff", "#fe5f55", "#fda200", "#4bc292", "#b26cbb", "#f3b958", "#7fd1e8", "#e88ac0", "#a7c76b", "#c9a27e"]
+
+[theme.sidebar]
+backgroundColor = "#3a4c56"
+secondaryBackgroundColor = "#2c3a3d"

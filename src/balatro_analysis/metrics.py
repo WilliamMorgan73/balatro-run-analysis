@@ -54,6 +54,8 @@ def filter_episodes(
         steps=cut(run.steps),
         rounds=cut(run.rounds),
         shops=cut(run.shops),
+        hands=cut(run.hands),
+        decks=cut(run.decks),
         eval=filter_episodes(run.eval, 0, np.inf, decks, stakes) if run.eval else None,
     )
 
