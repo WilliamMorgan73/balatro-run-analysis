@@ -546,6 +546,9 @@ def test_replay_plays_a_blind(eval_runs_dir, fake_game):
     html = _html(at)
     assert html.count('class="rp-act"') == 3  # small blind: a discard and two plays
     assert "Flush" in html and "data:image/png;base64," in html  # card art from the game
+    assert 'data-dialog="ex-held-' in html  # jokers held, opening their collection card
+    assert ">lvl.1<" in html
+    assert any("As held at the first play" in c.value for c in at.caption)
     blinds = at.segmented_control(key="ex_blind")
     blinds.set_value(2).run()
     assert not at.exception

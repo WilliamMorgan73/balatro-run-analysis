@@ -144,3 +144,39 @@ def test_hand_fixture_is_valid_jsonl():
     for name in ("hands.jsonl", "decks.jsonl"):
         rows = [json.loads(line) for line in (HANDS_DIR / name).open()]
         assert rows and all("episode" in r for r in rows)
+
+
+def test_level_and_jokers_logged(eval_run):
+    h = hands.episode_hands(eval_run, 0)
+    plays = h[h["kind"] == "play"]
+    assert plays["level"].tolist() == [1, 1, 2] and plays["level_logged"].all()
+    assert h.loc[0, "jokers_held"] == ["j_joker"]
+    assert h.loc[2, "jokers_held"] == ["j_joker", "j_greedy_joker"]
+    assert hands.blind_jokers(eval_run, 0, 1) == (["j_joker"], True)
+
+    page = replay.blind_html(h[h["round"] == 2], Names(), lambda c: None, lambda k: None)
+    assert 'title="Hand level when played">lvl.2<' in page
+    page = replay.blind_html(h[h["round"] == 1], Names(), lambda c: None, lambda k: None)
+    assert page.count('class="rp-jchange"') == 1 and "gained <b>Greedy Joker</b>" in page
+
+
+def test_level_and_jokers_estimated_without_them(eval_run):
+    """Runs from before jokers/hand_level were logged: level at the start of the
+    blind from decks.jsonl, jokers from the shop log."""
+    eval_run.hands = eval_run.hands.drop(columns=["jokers", "hand_level"])
+    eval_run._memo.clear()
+    h = hands.episode_hands(eval_run, 0)
+    plays = h[h["kind"] == "play"]
+    assert plays["level"].tolist() == [1, 1, 2]  # Pair is level 2 at round 2's start
+    assert not plays["level_logged"].any()
+    assert h["jokers_held"].isna().all()
+    page = replay.blind_html(h[h["round"] == 2], Names(), lambda c: None, lambda k: None)
+    assert 'class="rp-lvl est"' in page and 'class="rp-jchange"' not in page
+    jokers, logged = hands.blind_jokers(eval_run, 0, 2)
+    assert not logged and jokers == ["j_joker"]  # held leaving the shop after round 1
+
+
+def test_parse_joker():
+    assert cards.parse_joker("j_joker") == ("j_joker", None)
+    assert cards.parse_joker({"k": "j_joker", "ed": "foil"}) == ("j_joker", "foil")
+    assert cards.joker_keys(None) is None

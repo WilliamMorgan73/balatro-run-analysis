@@ -120,6 +120,8 @@ times the size of `steps.jsonl`. One object per play or discard, in order:
 | `kind` | `play` or `discard` |
 | `hand` | the cards held before acting, in hand order (see [Cards](#cards)) |
 | `picked` | indices into `hand` of the cards played or discarded (Cerulean Bell's forced card included) |
+| `hand_level` | the played hand's level when played (before scoring; Space Joker levels up during it); `null` for a discard |
+| `jokers` | jokers held when acting, in order: a key, or `{"k": key, "ed": edition}` |
 | `hand_type`, `chips`, `mult`, `score`, `debuffed` | the engine's scoring of a play (`score` = floor(chips × mult), inf past a double); `null` for a discard |
 | `chips_total` | the blind's score after this action |
 | `hands_left`, `discards_left`, `dollars` | after this action |

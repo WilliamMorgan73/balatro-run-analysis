@@ -10,9 +10,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from balatro_analysis.cards import parse_cards
+from balatro_analysis.cards import joker_keys, parse_cards
 from balatro_analysis.loader import Run, memo
-from balatro_analysis.metrics import _concat, blind_type
+from balatro_analysis.metrics import _concat, blind_type, episode_rounds
 
 # Balatro's hand order, best first (the order of the game's Run info screen)
 HAND_TYPES = (
@@ -46,13 +46,48 @@ def _plays(run: Run) -> pd.DataFrame:
 
 
 def episode_hands(run: Run, episode: int) -> pd.DataFrame:
-    """The episode's plays and discards in order, with ``cards`` (the hand as
-    ``PlayingCard``s) next to the logged columns."""
+    """The episode's plays and discards in order, with next to the logged columns:
+
+    - ``cards``: the hand as ``PlayingCard``s
+    - ``jokers_held``: joker keys held when acting (None if not logged)
+    - ``level`` and ``level_logged``: the played hand's level, as logged, or else
+      its level at the start of the blind from ``decks.jsonl`` (1 if not there)
+    """
     if not has_hands(run):
         return pd.DataFrame()
     h = run.hands[run.hands["episode"] == episode].sort_values(["round", "hand_no"]).copy()
     h["cards"] = [parse_cards(v) for v in h["hand"]]
+    h["jokers_held"] = [joker_keys(v) for v in h["jokers"]] if "jokers" in h else None
+    logged = h["hand_level"] if "hand_level" in h else pd.Series(np.nan, index=h.index)
+    decks = episode_decks(run, episode)
+    start = [
+        (decks.at[r, "hand_levels"] if r in decks.index and "hand_levels" in decks else None)
+        for r in h["round"]
+    ]
+    h["level_logged"] = logged.notna() & (h["kind"] == "play")
+    h["level"] = [
+        int(lv) if pd.notna(lv) else (levels or {}).get(t, 1) if isinstance(t, str) else None
+        for lv, levels, t in zip(logged, start, h["hand_type"], strict=True)
+    ]
     return h.reset_index(drop=True)
+
+
+def blind_jokers(run: Run, episode: int, round_: int) -> tuple[list[str], bool]:
+    """The jokers to show for a blind, and whether they were logged: from the
+    blind's first play or discard, else what was held leaving the shop before it
+    (none for the first blind)."""
+    if has_hands(run) and "jokers" in run.hands:
+        h = run.hands[(run.hands["episode"] == episode) & (run.hands["round"] == round_)]
+        if len(h):
+            first = h.sort_values("hand_no").iloc[0]["jokers"]
+            if isinstance(first, list):
+                return joker_keys(first) or [], True
+    rounds = episode_rounds(run, episode)
+    if "jokers" in rounds:
+        match = rounds.loc[rounds["round"] == round_, "jokers"]
+        if len(match) and isinstance(match.iloc[0], list):
+            return list(match.iloc[0]), False
+    return [], False
 
 
 def episode_decks(run: Run, episode: int) -> pd.DataFrame:

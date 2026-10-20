@@ -81,3 +81,15 @@ def parse_card(value: str | dict) -> PlayingCard:
 
 def parse_cards(values) -> list[PlayingCard]:
     return [parse_card(v) for v in values] if isinstance(values, list) else []
+
+
+def parse_joker(value: str | dict) -> tuple[str, str | None]:
+    """A joker as logged (its key, or ``{"k": key, "ed": edition}``): (key, edition)."""
+    if isinstance(value, dict):
+        return str(value.get("k", "")), value.get("ed")
+    return str(value), None
+
+
+def joker_keys(values) -> list[str] | None:
+    """The keys of a logged joker list, or None if the row has no joker list."""
+    return [parse_joker(v)[0] for v in values] if isinstance(values, list) else None

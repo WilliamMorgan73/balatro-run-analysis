@@ -68,7 +68,11 @@ CSS = f"""<style>
 .ed-polychrome img{{filter:hue-rotate(90deg) saturate(2.2) contrast(1.05)}}
 .ed-negative img{{filter:invert(1) hue-rotate(180deg)}}
 .rp-score{{display:flex;flex-direction:column;gap:4px;min-width:250px}}
-.rp-type{{font-size:1.4rem;line-height:1}}
+.rp-type{{font-size:1.4rem;line-height:1;display:flex;align-items:center;gap:8px}}
+.rp-lvl{{background:#fff;color:{TABLE};border-radius:6px;padding:1px 7px;font-size:1.05rem}}
+.rp-lvl.est{{background:transparent;color:#fff;border:2px dashed rgba(255,255,255,.55)}}
+.rp-jchange{{flex:0 0 100%;font-size:12.5px}}
+.rp-jchange b{{color:{PLAY}}}
 .rp-calc{{display:flex;align-items:center;gap:6px;font-size:1.45rem}}
 .rp-box{{border-radius:8px;padding:2px 10px;min-width:56px;text-align:right;
   box-shadow:0 3px 0 {LIP}}}
@@ -163,6 +167,20 @@ def _blind_head(blind_key: str, names: Names, icon_uri: IconUri) -> str:
     )
 
 
+def _level_badge(act) -> str:
+    """``lvl.2`` next to the hand played; dashed when it's only the level at the
+    start of the blind (runs that didn't log the level of each play)."""
+    level = getattr(act, "level", None)
+    if level is None or (isinstance(level, float) and math.isnan(level)):
+        return ""
+    if getattr(act, "level_logged", True):
+        return f'<span class="rp-lvl" title="Hand level when played">lvl.{int(level)}</span>'
+    return (
+        '<span class="rp-lvl est" title="Level at the start of the blind (this run didn\'t '
+        f'log the level of each play)">lvl.{int(level)}</span>'
+    )
+
+
 def blind_html(
     acts: pd.DataFrame,
     names: Names,
@@ -202,6 +220,7 @@ def blind_html(
     )
 
     rows = []
+    previous_jokers = None
     for n, a in enumerate(acts.itertuples(index=False), start=1):
         picked = set(a.picked) if isinstance(a.picked, list) else set()
         kind = a.kind
@@ -215,11 +234,27 @@ def blind_html(
             f'<span class="rp-note">{n} of {len(acts)}, {len(picked)} '
             f"card{'s' if len(picked) != 1 else ''}</span></div>"
         )
+        jokers = getattr(a, "jokers_held", None)
+        if isinstance(jokers, list):
+            if previous_jokers is not None and jokers != previous_jokers:
+                gained = [names.item(j) for j in jokers if j not in previous_jokers]
+                lost = [names.item(j) for j in previous_jokers if j not in jokers]
+                parts = [
+                    f"{verb} <b>{_esc(', '.join(js))}</b>"
+                    for verb, js in (("gained", gained), ("lost", lost))
+                    if js
+                ]
+                head += (
+                    '<div class="rp-jchange">Jokers since the last action: '
+                    f"{'; '.join(parts) or 'reordered'}</div>"
+                )
+            previous_jokers = jokers
         score = ""
         if kind == "play":
             debuffed = " (debuffed by the boss)" if a.debuffed else ""
             score = (
                 f'<div class="rp-score"><div class="rp-px rp-type">{_esc(a.hand_type)}'
+                f"{_level_badge(a)}"
                 f'<span class="rp-note" style="font-family:system-ui">{debuffed}</span></div>'
                 f'<div class="rp-calc rp-px"><span class="rp-box chips">{_num(a.chips)}</span>'
                 '<span class="rp-x">&times;</span>'

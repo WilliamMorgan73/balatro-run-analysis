@@ -1698,6 +1698,22 @@ with tabs[8]:
                     if "beaten" in rounds_:
                         match = rounds_[rounds_["round"] == blind_round]["beaten"]
                         beaten = bool(match.iloc[0]) if len(match) else None
+                    held, logged = hands.blind_jokers(run, episode, blind_round)
+                    st.markdown("**Jokers held**")
+                    if held:
+                        joker_grid([(j, "") for j in held], "ex-held")
+                    st.caption(
+                        ("None. " if not held else "")
+                        + (
+                            "As held at the first play or discard of this blind; changes "
+                            "during the blind are noted on the action. Click a joker for "
+                            "its effect."
+                            if logged
+                            else "What was held leaving the shop before this blind (this run "
+                            "didn't log jokers per play, so changes during the blind, "
+                            "like Riff-raff or Ice Cream, aren't shown)."
+                        )
+                    )
                     st.html(
                         replay.blind_html(
                             acts[acts["round"] == blind_round], names, card_uri, icon_uri, beaten
