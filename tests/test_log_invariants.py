@@ -1,10 +1,10 @@
-"""Invariants a train_random_shop run (log_version 5) must satisfy, checked on a
+"""Invariants a training run (log_version 5) must satisfy, checked on a
 real run (tests/fixtures/v5/run_v5: 12 smart-play episodes plus 2 eval rounds).
 
-The dashboard relies on these; regenerate the fixture with the jackdaw script
+The dashboard relies on these; regenerate the fixture with balatro-shop-rl
 when the log format changes, and these tests catch a harness that drifts:
 
-    uv run python scripts/train_random_shop.py --episodes 12 --play smart \\
+    uv run python scripts/train.py --episodes 12 --play smart \\
         --decks b_red,b_yellow --eval-every 6 --eval-episodes 3 --run-name run_v5
 """
 

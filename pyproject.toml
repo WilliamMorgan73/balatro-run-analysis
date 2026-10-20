@@ -1,7 +1,7 @@
 [project]
 name = "balatro-analysis"
 version = "0.1.0"
-description = "Streamlit dashboard for jackdaw-balatro shop-RL training runs"
+description = "Streamlit dashboard for balatro-shop-rl training runs"
 readme = "README.md"
 authors = [
     { name = "Will Morgan", email = "sghp78@durham.ac.uk" }
@@ -27,8 +27,6 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-# Example scripts follow jackdaw's own style and import jackdaw
-extend-exclude = ["examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]

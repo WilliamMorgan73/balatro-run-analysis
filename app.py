@@ -1,6 +1,6 @@
-"""Streamlit dashboard for jackdaw-balatro shop-RL training runs.
+"""Streamlit dashboard for balatro-shop-rl training runs.
 
-uv run streamlit run app.py -- --runs-dir ../jackdaw-balatro/runs
+uv run streamlit run app.py -- --runs-dir ../balatro-shop-rl/runs
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ from balatro_analysis.sprites import Sprites, find_balatro, game_archive  # noqa
 
 sys.modules["balatro_analysis"]._app_mtime = package_mtime()  # see reload_if_changed
 
-DEFAULT_RUNS_DIR = Path(__file__).parent.parent / "jackdaw-balatro" / "runs"
+DEFAULT_RUNS_DIR = Path(__file__).parent.parent / "balatro-shop-rl" / "runs"
 MIN_VISITS = 5  # money-curve points need at least this many shop visits
 MIN_LEGAL = 20  # preference needs an action to have been legal this often
 
