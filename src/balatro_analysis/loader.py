@@ -1,4 +1,6 @@
-"""Load training runs written by jackdaw-balatro's ``scripts/train_random_shop.py``.
+"""Load training runs written by balatro-shop-rl's ``scripts/train.py``.
+
+The format is specified in ``docs/run-format.md``.
 
 A run is a directory containing ``episodes.csv``, and optionally
 ``config.json``, ``steps.jsonl`` (one row per shop decision), ``rounds.jsonl``

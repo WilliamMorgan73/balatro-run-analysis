@@ -2,14 +2,14 @@
 
 Streamlit dashboard for shop-only RL training runs on
 [Jackdaw](https://github.com/TylerFlar/jackdaw-balatro), a Python Balatro simulator.
-The runs come from `scripts/train_random_shop.py`, included here under
-[`examples/jackdaw/`](examples/jackdaw) (see [Producing runs](#producing-runs)).
+The runs come from `balatro-shop-rl` (see [Producing runs](#producing-runs)); this repo
+only reads them. The format is in [docs/run-format.md](docs/run-format.md).
 
 ## Usage
 
 ```bash
 uv sync
-uv run streamlit run app.py                                   # reads ../jackdaw-balatro/runs
+uv run streamlit run app.py                                   # reads ../balatro-shop-rl/runs
 uv run streamlit run app.py -- --runs-dir /path/to/runs       # or anywhere else
 ```
 
@@ -25,47 +25,27 @@ the cache off. Deleting the folder is always safe.
 
 ## Producing runs
 
-The dashboard reads what these scripts write inside a jackdaw-balatro checkout:
-
-| Script | What it does |
-|---|---|
-| `scripts/train_random_shop.py` | Shop-only training harness (17 shop actions, random, tabular Q-learning or hand-written (`--shop heuristic`, `--shop smart`: the play-policy ceiling test) shop agent, random, Jackdaw `smart_agent` or `--play strong` play). Writes `runs/<run-name>/`. |
-| `scripts/play_policy.py` | The stronger play policy behind `--play strong`: `smart_agent` with exact scoring of candidate hands and blind- and draw-aware discards. |
-| `scripts/verify_shop_rl.py` | Feasibility checks for a shop-only RL wrapper (raw-state keys, shop indexing, env deepcopy, oracle timing, ...); `--play strong` times the oracle with the stronger policy. |
-
-**Option A: use the fork that already has them.**
-[WilliamMorgan73/jackdaw-balatro](https://github.com/WilliamMorgan73/jackdaw-balatro):
-`main` is upstream Jackdaw plus these scripts (see its `FORK.md`).
-
-**Option B: paste these files into Jackdaw.** `examples/jackdaw/` mirrors the
-jackdaw-balatro repo root, so copy its contents straight into your checkout:
+Runs are written by `balatro-shop-rl`, the agent code (shop environment, play
+policies, shop agents, training), which pulls Jackdaw from a pinned commit on
+[WilliamMorgan73/jackdaw-balatro](https://github.com/WilliamMorgan73/jackdaw-balatro).
+From a checkout next to this one:
 
 ```bash
-cp -r examples/jackdaw/. /path/to/jackdaw-balatro/
-# -> /path/to/jackdaw-balatro/scripts/play_policy.py
-# -> /path/to/jackdaw-balatro/scripts/train_random_shop.py
-# -> /path/to/jackdaw-balatro/scripts/verify_shop_rl.py
-```
-
-Then, from the jackdaw-balatro folder:
-
-```bash
-uv run python scripts/train_random_shop.py --episodes 500 --play smart
-uv run python scripts/train_random_shop.py --episodes 500 --play smart \
+cd ../balatro-shop-rl
+uv run python scripts/train.py --episodes 500 --play smart
+uv run python scripts/train.py --episodes 500 --play smart \
     --decks b_red,b_blue,b_black --stakes 1,2 --run-name smart_mixed
-uv run python scripts/train_random_shop.py --episodes 500 --play smart \
-    --eval-every 50 --eval-episodes 20      # + greedy eval on fixed seeds
-uv run python scripts/train_random_shop.py --episodes 500 --play smart \
+uv run python scripts/train.py --episodes 500 --play smart \
     --seed 1 --group smart_random --run-name smart_random_s1   # one seed of a group
-uv run python scripts/train_random_shop.py --episodes 1000 --play smart \
-    --shop qlearn --eval-every 100 --eval-episodes 20   # tabular Q-learning shop agent
-uv run python scripts/train_random_shop.py --episodes 1000 --play strong \
+uv run python scripts/train.py --episodes 1000 --play smart \
+    --shop qlearn --eval-every 100 --eval-episodes 20   # tabular Q-learning + greedy eval
+uv run python scripts/train.py --episodes 1000 --play strong \
     --shop heuristic --eval-every 1000 --eval-episodes 500   # stronger play policy
-uv run python scripts/verify_shop_rl.py
 ```
 
-`tests/test_examples.py` fails if the copies here and in `../jackdaw-balatro/scripts/`
-drift apart. Edit them in one place and copy the file across.
+Each run goes to `../balatro-shop-rl/runs/<run-name>/`, which is where the dashboard
+looks by default. Its `config.json` records the `balatro-shop-rl` and Jackdaw commits
+it ran on.
 
 ## Names: presenting vs analysing
 
@@ -210,7 +190,7 @@ src/balatro_analysis/game_text.py joker effect text from the local game install
 src/balatro_analysis/collection.py the Joker collection cards
 src/balatro_analysis/picker.py  native folder dialog
 scripts/sync_centers.py         regenerate the name/sprite catalog from jackdaw
-examples/jackdaw/               files to paste into a jackdaw-balatro checkout
+docs/run-format.md              the run folder format (log_version 6)
 tests/                          pytest + Streamlit AppTest on a small fixture run
 ```
 
@@ -218,7 +198,7 @@ tests/                          pytest + Streamlit AppTest on a small fixture ru
 
 ```bash
 uv run pytest            # fast suite
-uv run pytest -m slow    # + real PNG/SVG render and a train -> load run through ../jackdaw-balatro
+uv run pytest -m slow    # + real PNG/SVG render and a train -> load run through ../balatro-shop-rl
 uv run ruff check .
 ```
 

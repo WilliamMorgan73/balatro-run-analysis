@@ -1,1 +1,1 @@
-"""Load, analyse and visualise jackdaw-balatro shop-RL training runs."""
+"""Load, analyse and visualise balatro-shop-rl training runs."""
