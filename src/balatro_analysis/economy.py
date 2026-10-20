@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from balatro_analysis import catalog, stats
-from balatro_analysis.loader import Run
+from balatro_analysis.loader import Run, memo
 
 DEFAULT_INTEREST_CAP = 25
 BUY_CATEGORIES = [
@@ -82,8 +82,21 @@ def steps_with_money(run: Run) -> pd.DataFrame:
     step was open (e.g. The Hermit / Wraith; log_version 5, else 0)."""
     if run.steps is None or run.steps.empty:
         return pd.DataFrame()
+    return memo(run, "steps_with_money", lambda: _steps_with_money(run))
+
+
+def _steps_with_money(run: Run) -> pd.DataFrame:
     s = run.steps.sort_values(["episode", "step"]).copy()
-    s["category"] = [category(a, k) for a, k in zip(s["action_name"], s["item_key"], strict=True)]
+    # categorise each distinct (action, item) once, not every step
+    pairs = s[["action_name", "item_key"]].drop_duplicates()
+    pairs["category"] = [
+        category(a, k) for a, k in zip(pairs["action_name"], pairs["item_key"], strict=True)
+    ]
+    s["category"] = (
+        s[["action_name", "item_key"]]
+        .merge(pairs, on=["action_name", "item_key"], how="left")["category"]
+        .to_numpy()
+    )
     delta = s["dollars_after"] - s["dollars_before"]
     s["spent"] = (-delta).clip(lower=0)
     s["income"] = delta.clip(lower=0)
@@ -134,37 +147,42 @@ def shop_visits(runs: list[Run]) -> pd.DataFrame:
     rerolls, buys, plus the estimated interest the exit balance earns."""
     frames = []
     for r in runs:
-        s = steps_with_money(r)
-        if s.empty:
+        if r.steps is None or r.steps.empty:
             continue
-        sold = s["income"].where(s["category"].isin(INCOME_CATEGORIES[:2]), 0)
-        s = s.assign(
-            sold=sold,
-            other_income=s["income"] - sold + s["pack_income"],
-            is_reroll=s["category"] == "Rerolls",
-            reroll_spend=s["spent"].where(s["category"] == "Rerolls", 0),
-            is_buy=(s["spent"] > 0) & (s["category"] != "Rerolls"),
-        )
-        v = s.groupby(["episode", "round"], as_index=False).agg(
-            ante=("ante", "first"),
-            entry=("dollars_before", "first"),
-            exit=("dollars_after", "last"),
-            spent=("spent", "sum"),
-            sold=("sold", "sum"),
-            other_income=("other_income", "sum"),
-            pack_loss=("pack_loss", "sum"),
-            rerolls=("is_reroll", "sum"),
-            reroll_spend=("reroll_spend", "sum"),
-            buys=("is_buy", "sum"),
-            decisions=("step", "size"),
-        )
-        cap = visit_interest_cap(r, v)
-        v["interest_cap"] = cap
-        v["est_interest"] = np.minimum(v["exit"] // 5, cap // 5).clip(lower=0)
-        v["at_cap"] = v["exit"] >= cap
-        v["parked_above_cap"] = (v["exit"] - cap).clip(lower=0)
-        frames.append(v.assign(run=r.name))
+        frames.append(memo(r, "shop_visits", lambda r=r: _shop_visits(r)))
     return _concat(frames)
+
+
+def _shop_visits(r: Run) -> pd.DataFrame:
+    """``shop_visits`` for one run."""
+    s = steps_with_money(r)
+    sold = s["income"].where(s["category"].isin(INCOME_CATEGORIES[:2]), 0)
+    s = s.assign(
+        sold=sold,
+        other_income=s["income"] - sold + s["pack_income"],
+        is_reroll=s["category"] == "Rerolls",
+        reroll_spend=s["spent"].where(s["category"] == "Rerolls", 0),
+        is_buy=(s["spent"] > 0) & (s["category"] != "Rerolls"),
+    )
+    v = s.groupby(["episode", "round"], as_index=False).agg(
+        ante=("ante", "first"),
+        entry=("dollars_before", "first"),
+        exit=("dollars_after", "last"),
+        spent=("spent", "sum"),
+        sold=("sold", "sum"),
+        other_income=("other_income", "sum"),
+        pack_loss=("pack_loss", "sum"),
+        rerolls=("is_reroll", "sum"),
+        reroll_spend=("reroll_spend", "sum"),
+        buys=("is_buy", "sum"),
+        decisions=("step", "size"),
+    )
+    cap = visit_interest_cap(r, v)
+    v["interest_cap"] = cap
+    v["est_interest"] = np.minimum(v["exit"] // 5, cap // 5).clip(lower=0)
+    v["at_cap"] = v["exit"] >= cap
+    v["parked_above_cap"] = (v["exit"] - cap).clip(lower=0)
+    return v.assign(run=r.name)
 
 
 def money_by_round(runs: list[Run]) -> pd.DataFrame:

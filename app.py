@@ -85,7 +85,9 @@ def cli_runs_dir() -> Path:
     return args.runs_dir
 
 
-@st.cache_data(show_spinner="Loading run…")
+# cache_resource hands back the cached Run itself: cache_data would unpickle every
+# run (hundreds of MB) on each rerun.  Nothing writes to it; tabs filter copies.
+@st.cache_resource(show_spinner="Loading run…", max_entries=256)
 def cached_run(path: str, root: str, mtime: float, pkg_mtime: float) -> Run:
     # mtime: re-written runs reload; pkg_mtime: never reuse Runs from old code
     return load_run(path, root)
@@ -452,7 +454,7 @@ with st.sidebar:
         ep_range = st.slider("Episodes", 0, max(max_ep, 1), (0, max_ep))
     window = st.slider("Rolling window", 1, max(2, max_ep + 1), min(50, max_ep + 1))
     if st.button("Reload runs"):
-        st.cache_data.clear()
+        cached_run.clear()
         st.rerun()
 
     with st.expander("Game assets (icons)"):

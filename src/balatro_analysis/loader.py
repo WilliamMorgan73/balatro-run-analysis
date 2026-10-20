@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +33,17 @@ class Run:
     rounds: pd.DataFrame | None = None
     shops: pd.DataFrame | None = None
     eval: Run | None = None  # greedy episodes on the fixed eval seeds, if logged
+    # frames derived from this run's tables (see ``memo``), so the tables must not
+    # change once read; a filtered or replace()d run starts empty
+    _memo: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+
+
+def memo(run: Run, key: str, build: Callable[[], pd.DataFrame]) -> pd.DataFrame:
+    """``build()`` once per run, so tabs calling the same helper share it.  Each
+    caller gets its own (copy-on-write) view to add columns to."""
+    if key not in run._memo:
+        run._memo[key] = build()
+    return run._memo[key].copy(deep=False)
 
 
 EVAL_DIR = "eval"
@@ -121,7 +133,7 @@ def _load_tables(path: Path, name: str, config: dict) -> Run:
     if steps is not None:
         for col in ("jokers_before", "consumables_before"):
             if col in steps:
-                steps[col] = steps[col].apply(lambda v: list(v) if isinstance(v, list) else [])
+                steps[col] = [v if isinstance(v, list) else [] for v in steps[col]]
 
     return Run(
         name=name,

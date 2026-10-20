@@ -7,6 +7,8 @@ Fixture shop steps (money before -> after):
                                                  (entry 9, exit 2, spent 9, sold 2)
 """
 
+from dataclasses import replace
+
 import pandas as pd
 import pytest
 
@@ -148,7 +150,8 @@ def test_tag_income(run):
 
 def test_pack_income(run):
     """log_version 5 logs money once a bought pack closes; gains count as income."""
-    assert "Pack contents" not in set(economy.income_by_source([run])["source"])
+    # on a copy: derived frames are memoised per Run, and this test edits the steps
+    assert "Pack contents" not in set(economy.income_by_source([replace(run)])["source"])
     s = run.steps
     s["dollars_after_pack"] = None
     first = s.index[0]
