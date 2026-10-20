@@ -24,7 +24,7 @@ The dashboard reads what two scripts write inside a jackdaw-balatro checkout:
 
 | Script | What it does |
 |---|---|
-| `scripts/train_random_shop.py` | Shop-only training harness (17 shop actions, random or tabular Q-learning shop agent, random or Jackdaw `smart_agent` play). Writes `runs/<run-name>/`. |
+| `scripts/train_random_shop.py` | Shop-only training harness (17 shop actions, random, tabular Q-learning or hand-written (`--shop heuristic`, `--shop smart`: the play-policy ceiling test) shop agent, random or Jackdaw `smart_agent` play). Writes `runs/<run-name>/`. |
 | `scripts/verify_shop_rl.py` | Feasibility checks for a shop-only RL wrapper (raw-state keys, shop indexing, env deepcopy, oracle timing, ...). |
 
 **Option A: use the fork that already has them.**
