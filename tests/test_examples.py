@@ -21,6 +21,7 @@ needs_jackdaw = pytest.mark.skipif(
 
 def test_examples_exist():
     assert [str(p) for p in SCRIPTS] == [
+        "scripts/play_policy.py",
         "scripts/train_random_shop.py",
         "scripts/verify_shop_rl.py",
     ]
