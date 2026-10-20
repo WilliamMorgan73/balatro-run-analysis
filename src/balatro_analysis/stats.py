@@ -219,7 +219,9 @@ def compare(runs: list[Run], baseline: str) -> pd.DataFrame:
                 "baseline": baseline,
                 "episodes": len(a_ante),
                 "baseline_episodes": len(b_ante),
-                "mean_ante_diff": a_ante.mean() - b_ante.mean() if len(a_ante) else float("nan"),
+                "mean_ante_diff": a_ante.mean() - b_ante.mean()
+                if len(a_ante) and len(b_ante)
+                else float("nan"),
                 "diff_ci_low": lo,
                 "diff_ci_high": hi,
                 "rank_biserial": effect,

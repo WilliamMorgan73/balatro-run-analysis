@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -92,6 +93,14 @@ def test_paired_only_matches_same_seed_and_deck():
 
 def test_compare_unknown_baseline():
     assert stats.compare([_run("a", [1, 2])], "nope").empty
+
+
+def test_compare_empty_baseline():
+    """A baseline the filters left empty: no difference, and no empty-mean warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        c = stats.compare([_run("base", []), _run("a", [1, 2])], "base").iloc[0]
+    assert np.isnan(c["mean_ante_diff"])
 
 
 def test_bh_adjust():
