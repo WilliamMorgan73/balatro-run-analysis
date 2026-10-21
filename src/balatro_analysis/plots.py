@@ -744,7 +744,8 @@ def availability(df: pd.DataFrame, names: Names) -> go.Figure:
     long["measure"] = long["measure"].map(
         {"legal_rate": "legal (share of decisions)", "chosen_when_legal": "chosen when legal"}
     )
-    multi = long["run"].nunique() > 1
+    n_runs = long["run"].nunique()
+    multi = n_runs > 1
     fig = px.bar(
         long,
         x="action",
@@ -756,10 +757,23 @@ def availability(df: pd.DataFrame, names: Names) -> go.Figure:
         labels=_labels(names, "action", "run")
         | {"rate": "", "measure": "", "legal_count": "decisions legal", "chosen": "times chosen"},
         title="How often each action was available, and taken when it was",
+        facet_row_spacing=0.25 / n_runs if multi else None,
     )
     fig.update_yaxes(tickformat=".0%")
-    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
-    return _fig(fig, height=max(400, 300 * long["run"].nunique()))
+    # every panel names its actions (Plotly only labels the bottom one by default)
+    fig.update_xaxes(showticklabels=True)
+    # run names as titles above each panel rather than sideways at the right
+    fig.for_each_annotation(
+        lambda a: a.update(
+            text=f"<b>{a.text.split('=')[-1]}</b>",
+            textangle=0,
+            x=0,
+            xanchor="left",
+            y=a.y + 0.5 / n_runs * (1 - 0.25),
+            yanchor="bottom",
+        )
+    )
+    return _fig(fig, height=max(420, 380 * n_runs))
 
 
 def preference(df: pd.DataFrame, names: Names) -> go.Figure:

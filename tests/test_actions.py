@@ -151,3 +151,17 @@ def test_availability_with_no_steps_left(run):
     assert actions.legal_counts([empty]).empty
     both = actions.availability([run, empty])
     assert set(both["run"]) == {run.name}
+
+
+def test_availability_chart_labels_every_run_panel(run):
+    """One panel per run: each must name its actions, not only the bottom one."""
+    from dataclasses import replace
+
+    from balatro_analysis import plots
+    from balatro_analysis.names import Names
+
+    runs = [run, replace(run, name="other")]
+    fig = plots.availability(actions.availability(runs), Names())
+    xaxes = [fig.layout[k] for k in fig.layout if k.startswith("xaxis")]
+    assert len(xaxes) == 2 and all(ax.showticklabels for ax in xaxes)
+    assert sorted(a.text for a in fig.layout.annotations) == ["<b>other</b>", "<b>run_small</b>"]

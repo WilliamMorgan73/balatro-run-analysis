@@ -1010,15 +1010,45 @@ with tabs[2]:
 
         with sub[3]:
             if sub[3].open:
-                bins = st.slider("Episode bins", 2, 50, 10, key="actions_bins")
+                # Eval episodes are numbered round by round, so one block per eval round
+                # lines the blocks up with the rounds
+                n_rounds = max(r.episodes["eval_round"].nunique() for r in runs) if eval_mode else 0
+                bins = st.slider(
+                    "Episode bins",
+                    2,
+                    50,
+                    n_rounds if n_rounds > 1 else 10,
+                    key="actions_bins_eval" if eval_mode else "actions_bins",
+                    help="Splits each run's episodes into this many equal blocks: 1000 "
+                    "episodes and 10 bins gives blocks of 100. More bins show finer changes, "
+                    "but each block has fewer decisions, so it's noisier.",
+                )
+                st.caption(
+                    "Does the shop agent's behaviour change as it trains? Each column is a "
+                    "block of episodes; the coloured bands split that block's shop decisions "
+                    "by kind and add up to 100%."
+                    + (
+                        " These are **eval episodes**: with Eval round *All* under Filter and "
+                        "one bin per eval round, each column is the greedy policy at that "
+                        "point in training (round 0 is before any training)."
+                        if eval_mode
+                        else ""
+                    )
+                )
                 over = actions.family_over_training(runs, bins)
                 if need(over, "per-step action data", no_steps):
                     chart(
                         plots.family_over_training(over, names),
                         "action families over training",
-                        "Share of each kind of decision within each block of episodes (block "
-                        "count set by the slider), one panel per run. A random agent stays "
-                        "flat; a learning one should drift.",
+                        "Share of each kind of shop decision (buy a card, pack or voucher, "
+                        "sell a joker or consumable, use a consumable, reroll, leave) in each "
+                        "block of episodes, one panel per run; the x axis is each block's first "
+                        "episode. The random, heuristic and smart shops don't learn, so their "
+                        "mix should stay roughly flat: any slow drift comes from the games "
+                        "(better play reaches later antes with more money to spend), not the "
+                        "agent. Q-learning starts fully random (epsilon 1.0, falling evenly to "
+                        "0.05 over the first 80% of training episodes), so its early blocks look "
+                        "like the random shop and the later ones show the habits it learned.",
                     )
 
         with sub[4]:
