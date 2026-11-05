@@ -6,9 +6,11 @@ uv run streamlit run app.py -- --runs-dir ../balatro-shop-rl/runs
 from __future__ import annotations
 
 import argparse
+import collections
 import functools
 import importlib
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -75,7 +77,7 @@ from balatro_analysis import (  # noqa: E402
     theme,
 )
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
-from balatro_analysis.loader import Run, find_runs  # noqa: E402
+from balatro_analysis.loader import Run, find_runs, log_bytes  # noqa: E402
 from balatro_analysis.names import Names, split_items  # noqa: E402
 from balatro_analysis.picker import PickerUnavailable, pick_directory  # noqa: E402
 from balatro_analysis.sprites import Sprites, find_balatro, game_archive  # noqa: E402
@@ -94,13 +96,52 @@ def cli_runs_dir() -> Path:
     return args.runs_dir
 
 
-# cache_resource hands back the cached Run itself: cache_data would unpickle every
-# run (hundreds of MB) on each rerun.  Nothing writes to it; tabs filter copies.
-@st.cache_resource(show_spinner="Loading run…", max_entries=24)
-def cached_run(path: str, root: str, mtime: float, pkg_mtime: float) -> Run:
+RUNS_KEPT = 24  # runs held in memory across reruns and sessions
+
+
+# The cached Runs themselves (not copies): cache_data would unpickle every run
+# (hundreds of MB) on each rerun.  Nothing writes to them; tabs filter copies.  A
+# plain dict rather than caching ``cached_run``, which may draw the progress bar.
+@st.cache_resource
+def run_store() -> collections.OrderedDict[tuple, Run]:
+    return collections.OrderedDict()
+
+
+@st.cache_resource
+def run_locks() -> tuple[threading.Lock, dict[tuple, threading.Lock]]:
+    """A lock per run key, so sessions loading the same run at once read it once
+    (the second waits for the first); different runs still load in parallel.
+    The first lock guards the store and the dict of locks."""
+    return threading.Lock(), {}
+
+
+def cached_run(path: str, root: str, mtime: float, pkg_mtime: float, progress=None) -> Run:
     # mtime: re-written runs reload; pkg_mtime: never reuse Runs from old code.
     # Runs unchanged since a previous session come from the disk cache.
-    return runcache.load_run_cached(path, root, runcache.cache_dir())
+    store, key = run_store(), (path, root, mtime, pkg_mtime)
+    guard, locks = run_locks()
+    with guard:
+        if key in store:
+            store.move_to_end(key)
+            return store[key]
+        lock = locks.setdefault(key, threading.Lock())
+    with lock:
+        with guard:  # loaded by another session while this one waited
+            if key in store:
+                store.move_to_end(key)
+                return store[key]
+        try:
+            run = runcache.load_run_cached(path, root, runcache.cache_dir(), progress)
+        except BaseException:
+            with guard:
+                locks.pop(key, None)
+            raise
+        with guard:  # stored and unlocked together, so no session loads it twice
+            store[key] = run
+            locks.pop(key, None)
+            while len(store) > RUNS_KEPT:
+                store.popitem(last=False)
+    return run
 
 
 @st.cache_resource(max_entries=16)  # each entry can be a full copy of a run
@@ -367,15 +408,37 @@ with st.sidebar:
         files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
         return max(f.stat().st_mtime for f in files if f.is_file())
 
-    def load(name: str) -> Run | None:
+    # A progress bar over every run's log bytes, only shown once a run is actually
+    # read (from disk or the disk cache): runs already in memory never report.
+    load_slot = st.empty()
+    run_bytes = {n: max(log_bytes(p), 1) for n, p in run_dirs.items()}
+    total_bytes = sum(run_bytes.values())
+    bytes_before = 0
+
+    def load(i: int, name: str) -> Run | None:
         """The run, or None if it has no episodes yet (still training?) or can't be read."""
+
+        def progress(label: str, fraction: float) -> None:
+            done = (bytes_before + fraction * run_bytes[name]) / total_bytes
+            load_slot.progress(
+                min(done, 1.0),
+                text=f"Loading run {i}/{len(run_dirs)}: {name} · {label} "
+                f"({run_bytes[name] / 1e6:,.0f} MB)",
+            )
+
         try:
-            run = cached_run(str(run_dirs[name]), str(root), run_mtime(run_dirs[name]), pkg_mtime)
+            run = cached_run(
+                str(run_dirs[name]), str(root), run_mtime(run_dirs[name]), pkg_mtime, progress
+            )
         except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
             return None
         return None if run.episodes.empty else run
 
-    loaded = {n: load(n) for n in run_dirs}
+    loaded = {}
+    for i, n in enumerate(run_dirs, 1):
+        loaded[n] = load(i, n)
+        bytes_before += run_bytes[n]
+    load_slot.empty()
     run_index = find.run_index(loaded)
 
     # Every run starts selected; runs that appear later (Reload runs) are added
@@ -408,7 +471,8 @@ with st.sidebar:
         icon=":material/refresh:",
         help="Read the runs again, e.g. after a training run finished",
     ):
-        cached_run.clear()
+        with run_locks()[0]:
+            run_store().clear()
         cached_filtered.clear()
         st.rerun()
 

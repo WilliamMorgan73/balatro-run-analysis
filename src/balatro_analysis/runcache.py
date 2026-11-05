@@ -24,19 +24,11 @@ import pandas as pd
 import pyarrow as pa
 
 from balatro_analysis import loader
-from balatro_analysis.loader import EVAL_DIR, Run, load_run
+from balatro_analysis.loader import EVAL_DIR, LOG_FILES, Progress, Run, load_run
 
 ENV = "BALATRO_ANALYSIS_CACHE"
 STALE_DAYS = 30  # cached runs not read or written for this long are deleted
-SOURCES = (
-    "episodes.csv",
-    "config.json",
-    "steps.jsonl",
-    "rounds.jsonl",
-    "shops.jsonl",
-    "hands.jsonl",
-    "decks.jsonl",
-)
+SOURCES = LOG_FILES
 
 
 def cache_dir() -> Path | None:
@@ -73,24 +65,32 @@ def _cache_file(folder: Path, path: Path, root: str | Path | None) -> Path:
 
 
 def load_run_cached(
-    path: str | Path, root: str | Path | None = None, folder: Path | None = None
+    path: str | Path,
+    root: str | Path | None = None,
+    folder: Path | None = None,
+    progress: Progress | None = None,
 ) -> Run:
     """``loader.load_run``, from the cache in ``folder`` when the run hasn't
-    changed since it was cached.  ``folder=None``: no cache."""
+    changed since it was cached.  ``folder=None``: no cache.  ``progress`` as for
+    ``load_run``; a cached copy reports once, as "cached copy"."""
     path = Path(path)
     if folder is None:
-        return load_run(path, root)
+        return load_run(path, root, progress)
     file = _cache_file(folder, path, root)
     expected = fingerprint(path)
     try:
         with file.open("rb") as fh:
+            if progress is not None:
+                progress("cached copy", 0.0)
             cached = pickle.load(fh)
         if cached["fingerprint"] == expected:
             _touch(file)
             return cached["run"]
     except Exception:  # missing, stale format or corrupt: parse it again
         pass
-    run = load_run(path, root)
+    run = load_run(path, root, progress)
+    if progress is not None:
+        progress("saving to cache", 1.0)
     tmp = file.with_suffix(f".{os.getpid()}.tmp")
     try:
         folder.mkdir(parents=True, exist_ok=True)
