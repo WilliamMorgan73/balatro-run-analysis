@@ -732,6 +732,121 @@ def run_sheet_grid(sheet_runs: list[Run], ci, means: dict, best_run: str | None)
                 )
 
 
+IQM_HELP = (
+    "**Interquartile mean (IQM)**: the mean of the middle 50% of games, dropping the best "
+    "and worst quarter, as Agarwal et al. (2021) recommend for RL results: steadier than the "
+    "mean, less coarse than the median."
+)
+
+
+def iqm_table(by_group: bool) -> None:
+    """IQM of ante and return with stratified bootstrap 95% CIs (``stats.iqm_summary``)."""
+    iq = stats.iqm_summary(runs, by_group)
+    if not len(iq):
+        return
+    shared = (iq["method"] == stats.SHARED_GAMES).any()
+    st.caption(
+        IQM_HELP
+        + " 95% CI by stratified bootstrap: "
+        + (
+            "where a group's runs played the same games (eval episodes), training seeds are "
+            "redrawn within each game, as rliable does, so the interval reflects seed-to-seed "
+            "variation; otherwise episodes are redrawn within each run."
+            if by_group and shared
+            else "episodes are redrawn within each run."
+        )
+    )
+    num = st.column_config.NumberColumn(format="%.3f")
+    table(iq, column_config={names.column(c): num for c in ("mean", "iqm", "iqm_low", "iqm_high")})
+
+
+def power_section(by_group: bool, baseline: str | None) -> None:
+    """How small a difference in mean ante this selection can detect, and what it
+    would take to detect a chosen one (``stats.power_runs`` / ``power_groups``)."""
+    st.subheader("Can these runs tell agents apart?")
+    target = st.number_input(
+        "Difference in mean ante to detect",
+        min_value=0.01,
+        value=0.25,
+        step=0.05,
+        key="power_target",
+        help="The smallest difference you'd care about between two agents.",
+    )
+    shown = "two-sided test, α = 0.05, 80% power (exact noncentral t)"
+    if by_group:
+        pw = stats.power_groups(runs, target)
+        if not need(pw, "group with two or more runs to estimate seed-to-seed variation"):
+            return
+        st.caption(
+            "Comparing two groups on the mean of their runs' mean ante, as the comparison above "
+            "does. Ante varies from game to game (SD within a run) and from seed to seed (SD of "
+            "the runs' true means, after removing game noise). **Detectable now**: the "
+            "smallest difference found 80% of the time with this many seeds and games per seed. "
+            "**Seeds needed**: per group, for your difference with this many games per seed; "
+            "with unlimited games only seed-to-seed variation is left. Treats the groups as "
+            f"independent (no pairing on shared eval seeds), so it's conservative. {shown}."
+        )
+        worst = pw.loc[pw["mde"].idxmax()]
+        cols = st.columns(3)
+        cols[0].metric(
+            "Detectable now",
+            f"{worst['mde']:.2f} ante",
+            help=f"Worst group: {worst['group']}",
+        )
+        needed = pw["seeds_needed"].dropna()
+        cols[1].metric(
+            f"Seeds needed for {target:g}",
+            f"{int(needed.max())}" if len(needed) else f"> {stats.MAX_N:,}",
+            help=f"With {int(worst['games_per_seed'])} games per seed, the largest over the groups",
+        )
+        floor = pw["seeds_needed_any_games"].dropna()
+        cols[2].metric(
+            "With unlimited games",
+            f"{int(floor.max())} seeds" if len(floor) == len(pw) else "unknown",
+            help="Seeds needed if every seed played infinitely many games. Unknown when a "
+            "group's seed-to-seed variation is estimated as 0: too small to see with these games.",
+        )
+        if worst["mde"] > target:
+            st.warning(
+                f"With {int(worst['seeds'])} seeds and {int(worst['games_per_seed'])} games per "
+                f"seed, the smallest difference these groups can reliably detect is "
+                f"{worst['mde']:.2f} ante, more than the {target:g} you're after: a "
+                "non-significant difference here says little."
+            )
+        num = st.column_config.NumberColumn(format="%.3f")
+        table(pw, column_config={names.column(c): num for c in ("sd_game", "sd_seed", "mde")})
+        return
+    if baseline is None:
+        st.info("Select two or more runs to see what they can tell apart.")
+        return
+    pw = stats.power_runs(runs, baseline, target)
+    if not need(pw, "runs to compare with the baseline"):
+        return
+    st.caption(
+        f"Each run against {baseline} on mean ante. Paired on games both played (same seed, "
+        "deck and stake), which removes seed luck, otherwise two-sample. **Detectable now**: "
+        "the smallest difference found 80% of the time with this many games. **Games needed**: "
+        f"per run, for your difference. {shown}."
+    )
+    worst = pw.loc[pw["mde"].idxmax()]
+    cols = st.columns(2)
+    cols[0].metric("Detectable now", f"{worst['mde']:.2f} ante", help=f"Worst run: {worst['run']}")
+    needed = pw["games_needed"].dropna()
+    cols[1].metric(
+        f"Games needed for {target:g}",
+        f"{int(needed.max()):,}" if len(needed) == len(pw) else f"> {stats.MAX_N:,}",
+        help="The largest over the runs",
+    )
+    if worst["mde"] > target:
+        st.warning(
+            f"With {int(worst['games'])} games the smallest difference these runs can reliably "
+            f"detect is {worst['mde']:.2f} ante, more than the {target:g} you're after: a "
+            "non-significant difference here says little."
+        )
+    num = st.column_config.NumberColumn(format="%.3f")
+    table(pw, column_config={names.column(c): num for c in ("sd", "mde")})
+
+
 # --- Overview -------------------------------------------------------------
 with tabs[0]:
     if tabs[0].open:
@@ -774,6 +889,7 @@ with tabs[0]:
                     stats.run_means(runs),
                     column_config={names.column(c): num for c in stats.OUTCOMES.values()},
                 )
+            iqm_table(by_group=True)
             if len(group_map) > 1:
                 baseline = st.selectbox(
                     "Compare against baseline group", list(group_map), key="baseline_group"
@@ -791,6 +907,7 @@ with tabs[0]:
                         if c.endswith(("_diff", "_low", "_high", "_p"))
                     },
                 )
+            power_section(by_group=True, baseline=None)
         else:
             summary = metrics.summary(runs)
             table(
@@ -817,6 +934,7 @@ with tabs[0]:
                         names.column(c): num for c in ("mean", "ci_low", "ci_high", "std")
                     },
                 )
+            iqm_table(by_group=False)
             if len(runs) > 1:
                 baseline = st.selectbox(
                     "Compare against baseline", [r.name for r in runs], key="baseline_run"
@@ -847,6 +965,7 @@ with tabs[0]:
                     }
                     | {names.column(c): pval for c in ("mann_whitney_p", "fisher_p", "wilcoxon_p")},
                 )
+            power_section(by_group=False, baseline=baseline if len(runs) > 1 else None)
         if eval_runs:
             st.subheader("Evaluation on fixed seeds")
             ecurve = stats.group_eval_curve(eval_runs) if by_group else stats.eval_curve(eval_runs)

@@ -148,6 +148,13 @@ episodes don't: there are far more of them and the log is several times the size
   **Compare: Runs / Groups** switch averages each group's runs: summary with a Student-t CI
   across seeds, Welch's t-test against a baseline group, and group learning / eval curves with
   bands across seeds. Use groups for claims about a method, since a single training run can be lucky.
+  Both views also give the **interquartile mean** (IQM, Agarwal et al. 2021) of ante and return
+  with a stratified bootstrap 95% CI: for a group whose runs played the same eval games, training
+  seeds are redrawn within each game (rliable's runs × tasks bootstrap), otherwise episodes within
+  each run. **Can these runs tell agents apart?** is a power readout (two-sided, α = 0.05, 80%
+  power): the smallest difference in mean ante the selection can detect, and the games (runs) or
+  seeds per group (groups, from the game-to-game and seed-to-seed variance) needed to detect a
+  difference you choose, with a warning when the current eval set is too small.
 - **Decks**: deck cards with episodes and mean ante; mean ante by deck and stake per run
 - **Actions**: KPI strip (decisions per visit, visits leaving at once, visits with a buy, most
   common first action) and sub-tabs:
@@ -206,7 +213,7 @@ app.py                          Streamlit UI only
 src/balatro_analysis/loader.py  find_runs / load_run -> Run
 src/balatro_analysis/metrics.py pure pandas metrics (testable without Streamlit)
 src/balatro_analysis/economy.py economy metrics (shop visits, spending, interest, offers)
-src/balatro_analysis/stats.py   confidence intervals, run-vs-baseline tests, p/q-values
+src/balatro_analysis/stats.py   confidence intervals, IQM, power, run-vs-baseline tests, p/q-values
 src/balatro_analysis/plots.py   Plotly figure builders
 src/balatro_analysis/catalog.py display names for game keys (centers, blinds)
 src/balatro_analysis/names.py   in-game names vs exact keys (the sidebar toggle)
