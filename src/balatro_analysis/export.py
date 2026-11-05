@@ -19,7 +19,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-from balatro_analysis import actions, economy, latex, metrics, stats
+from balatro_analysis import actions, economy, latex, loader, metrics, stats
 from balatro_analysis.loader import Run
 from balatro_analysis.names import DEFAULT_KEYS, Names
 
@@ -54,6 +54,11 @@ def unique_slugs(names: list[str]) -> list[str]:
 def with_names(df: pd.DataFrame, keys: dict[str, str] | None = None) -> pd.DataFrame:
     """Add a ``<col>_name`` column after every key column; lists become ``;``-joined."""
     out = df.copy()
+    for col, mask in loader.MASKS.items():  # back to the logged list of action ids
+        if mask in out and col not in out:
+            lists = out[mask].map(lambda m: loader.mask_actions(m) or None)
+            out.insert(out.columns.get_loc(mask), col, lists)
+            out = out.drop(columns=mask)
     for col in out.columns:
         if out[col].map(lambda v: isinstance(v, list)).any():
             out[col] = out[col].map(lambda v: ";".join(map(str, v)) if isinstance(v, list) else v)

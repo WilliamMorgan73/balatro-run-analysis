@@ -165,3 +165,20 @@ def test_availability_chart_labels_every_run_panel(run):
     xaxes = [fig.layout[k] for k in fig.layout if k.startswith("xaxis")]
     assert len(xaxes) == 2 and all(ax.showticklabels for ax in xaxes)
     assert sorted(a.text for a in fig.layout.annotations) == ["<b>other</b>", "<b>run_small</b>"]
+
+
+def test_availability_same_from_mask_and_lists(run):
+    """Loaded runs keep ``legal`` as a bitmask; a ``legal`` list gives the same numbers."""
+    from balatro_analysis.loader import mask_actions
+
+    steps = run.steps.drop(columns="legal_mask").assign(
+        legal=[mask_actions(m) for m in run.steps["legal_mask"]]
+    )
+    lists = Run("lists", None, run.episodes, run.config, steps=steps)
+    a = actions.availability([run]).drop(columns="run")
+    b = actions.availability([lists]).drop(columns="run")
+    pd.testing.assert_frame_equal(a, b)
+    pd.testing.assert_frame_equal(
+        actions.legal_counts([run]).drop(columns="run"),
+        actions.legal_counts([lists]).drop(columns="run"),
+    )

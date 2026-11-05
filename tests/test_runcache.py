@@ -74,3 +74,20 @@ def test_no_cache_writes_nothing(tmp_path):
     run = runcache.load_run_cached(root / "run_v5", root, None)
     _assert_same(run, load_run(root / "run_v5", root))
     assert not (tmp_path / "cache").exists()
+
+
+def test_stale_files_are_removed(tmp_path):
+    import os
+    import time
+
+    root = _copy_run(tmp_path)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    old, recent = cache / "old.pkl", cache / "recent.pkl"
+    for f in (old, recent):
+        f.write_bytes(b"x")
+    month = time.time() - (runcache.STALE_DAYS + 1) * 86400
+    os.utime(old, (month, month))
+    runcache.load_run_cached(root / "run_v5", root, cache)
+    assert not old.exists() and recent.exists()
+    assert len(list(cache.glob("*.pkl"))) == 2  # recent + the run just cached

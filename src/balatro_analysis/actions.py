@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sps
 
-from balatro_analysis import metrics, stats
+from balatro_analysis import loader, metrics, stats
 from balatro_analysis.loader import Run, memo
 
 FAMILIES = [
@@ -330,14 +330,27 @@ def action_outcome_correlations(runs: list[Run]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
+def _legal_mask(steps: pd.DataFrame) -> pd.Series | None:
+    """Per step, a bitmask of the legal action ids (0: not logged); None for old logs.
+    Loaded runs carry ``legal_mask``; a ``legal`` list column (built by hand) works too."""
+    if "legal_mask" in steps:
+        return steps["legal_mask"]
+    if "legal" in steps:
+        return pd.Series(loader.mask_from_lists(steps["legal"]), index=steps.index)
+    return None
+
+
 def _with_legal(run: Run) -> pd.DataFrame:
-    """Steps that carry a ``legal`` list, with ``n_legal``; empty for old logs."""
-    if run.steps is None or "legal" not in run.steps or run.steps.empty:
+    """Steps that carry a legal-action list, with ``legal_mask`` and ``n_legal``;
+    empty for old logs."""
+    if run.steps is None or run.steps.empty:
         return pd.DataFrame()
-    # astype(bool): an empty mask is object-typed and would select columns, not rows
-    has = run.steps["legal"].map(lambda v: isinstance(v, list) and len(v) > 0).astype(bool)
-    s = run.steps[has]
-    return s.assign(n_legal=s["legal"].map(len))
+    mask = _legal_mask(run.steps)
+    if mask is None:
+        return pd.DataFrame()
+    has = (mask != 0).to_numpy()
+    m = mask[has].to_numpy().astype(np.int64)
+    return run.steps[has].assign(legal_mask=m, n_legal=np.bitwise_count(m).astype(np.int64))
 
 
 def availability(runs: list[Run]) -> pd.DataFrame:
@@ -356,41 +369,38 @@ def availability(runs: list[Run]) -> pd.DataFrame:
         if s.empty:
             continue
         names = metrics.action_names(r)
-        ex = s[["action", "legal", "n_legal"]].explode("legal")
-        ex["legal"] = ex["legal"].astype(int)
-        ex["chosen"] = ex["legal"] == ex["action"]
-        ex["uniform"] = 1.0 / ex["n_legal"]
-        ex["uniform_var"] = ex["uniform"] * (1 - ex["uniform"])
-        g = ex.groupby("legal").agg(
-            legal_count=("chosen", "size"),
-            chosen=("chosen", "sum"),
-            uniform_expected=("uniform", "mean"),
-            null_mean=("uniform", "sum"),
-            null_var=("uniform_var", "sum"),
-        )
-        g = g.reindex(range(len(names)), fill_value=0)
+        ids = np.arange(len(names), dtype=np.int64)
+        # decisions x actions: was the action legal / chosen there
+        legal = ((s["legal_mask"].to_numpy()[:, None] >> ids) & 1).astype(bool)
+        chosen = legal & (s["action"].to_numpy()[:, None] == ids)
+        uniform = 1.0 / s["n_legal"].to_numpy(dtype=float)
+        legal_count = legal.sum(axis=0)
+        chosen_count = chosen.sum(axis=0)
+        null_mean = uniform @ legal
+        null_var = (uniform * (1 - uniform)) @ legal
         out = pd.DataFrame(
             {
                 "run": r.name,
                 "action": names,
                 "decisions": len(s),
-                "legal_count": g["legal_count"].to_numpy(),
-                "chosen": g["chosen"].to_numpy(),
-                "legal_rate": g["legal_count"].to_numpy() / len(s),
+                "legal_count": legal_count,
+                "chosen": chosen_count,
+                "legal_rate": legal_count / len(s),
             }
         )
-        legal = g["legal_count"].replace(0, np.nan).to_numpy()
-        out["chosen_when_legal"] = g["chosen"].to_numpy() / legal
-        out["uniform_expected"] = g["uniform_expected"].where(g["legal_count"] > 0).to_numpy()
+        has = legal_count > 0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            out["chosen_when_legal"] = np.where(has, chosen_count / legal_count, np.nan)
+            out["uniform_expected"] = np.where(has, null_mean / legal_count, np.nan)
         out["preference"] = out["chosen_when_legal"] / out["uniform_expected"]
         ci = [
             stats.wilson_ci(int(c), int(n)) if n else (np.nan, np.nan)
-            for c, n in zip(g["chosen"], g["legal_count"], strict=True)
+            for c, n in zip(chosen_count, legal_count, strict=True)
         ]
         out["preference_low"] = [lo for lo, _ in ci] / out["uniform_expected"]
         out["preference_high"] = [hi for _, hi in ci] / out["uniform_expected"]
-        sd = np.sqrt(g["null_var"].to_numpy())
-        z = (g["chosen"].to_numpy() - g["null_mean"].to_numpy()) / np.where(sd > 0, sd, np.nan)
+        sd = np.sqrt(null_var)
+        z = (chosen_count - null_mean) / np.where(sd > 0, sd, np.nan)
         out["p_value"] = 2 * sps.norm.sf(np.abs(z))
         frames.append(out)
     return stats.with_q_values(_concat(frames))

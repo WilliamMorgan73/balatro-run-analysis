@@ -34,6 +34,14 @@ def private_run_cache(monkeypatch, tmp_path):
     monkeypatch.setenv("BALATRO_ANALYSIS_CACHE", str(tmp_path / "run-cache"))
 
 
+@pytest.fixture(autouse=True)
+def no_real_runs(monkeypatch):
+    """The app defaults to the developer's real training runs (hundreds of MB
+    each, pickled into the test's run cache) until a test sets ``runs_dir``:
+    point that default at the fixtures instead."""
+    monkeypatch.setattr("sys.argv", ["app.py", "--runs-dir", str(RUNS_DIR)])
+
+
 @pytest.fixture
 def runs_dir() -> Path:
     return RUNS_DIR

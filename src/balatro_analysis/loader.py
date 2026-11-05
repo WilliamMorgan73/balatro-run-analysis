@@ -22,7 +22,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.json as pj
 
 UNKNOWN = "unknown"
 
@@ -75,17 +79,108 @@ def find_runs(root: str | Path) -> list[Path]:
 def _complete_lines(path: Path) -> str:
     """The file's text without an unterminated last line: a run that is still
     training may be mid-way through writing it."""
-    text = path.read_text()
-    return text if text.endswith("\n") else text[: text.rfind("\n") + 1]
+    return _complete_bytes(path).decode()
+
+
+def _complete_bytes(path: Path) -> bytes:
+    data = path.read_bytes()
+    return data if data.endswith(b"\n") else data[: data.rfind(b"\n") + 1]
+
+
+# list columns of action ids stored as one bitmask per row (bit a = action a):
+# ``legal`` (17 ids on every shop decision) is ~200 MB as Python lists per run
+MASKS = {"legal": "legal_mask"}
 
 
 def _read_jsonl(path: Path) -> pd.DataFrame | None:
+    """One row per line.  Parsed with pyarrow (a fraction of the time and memory
+    of ``pd.read_json``); logs Arrow can't type, such as card lists mixing plain
+    keys and objects, fall back to pandas."""
     if not path.is_file():
         return None
-    text = _complete_lines(path)
-    if not text.strip():
+    data = _complete_bytes(path)
+    if not data.strip():
         return None
-    return pd.read_json(io.StringIO(text), lines=True)
+    try:
+        table = pj.read_json(
+            pa.BufferReader(data), parse_options=pj.ParseOptions(newlines_in_values=False)
+        )
+    except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
+        table = None
+    if table is not None and not any(pa.types.is_struct(t) for t in table.schema.types):
+        del data
+        return _from_arrow(table)
+    # objects as values (dicts) would come back with every key any row had
+    df = pd.read_json(io.StringIO(data.decode()), lines=True)
+    for col, mask in MASKS.items():
+        if col in df:
+            df[mask] = mask_from_lists(df.pop(col))
+    return df
+
+
+def _from_arrow(table: pa.Table) -> pd.DataFrame:
+    """Plain columns as pandas would read them; lists of scalars as Python lists
+    (rows holding equal lists share one list object, so they cost little: don't
+    mutate them); lists of objects (shop items) as Arrow-backed columns, which
+    iterate as dicts; ``MASKS`` columns as bitmasks."""
+    lists, arrow, masks = {}, {}, {}
+    for name, typ in zip(table.schema.names, table.schema.types, strict=True):
+        if not pa.types.is_list(typ):
+            continue
+        col = table.column(name).combine_chunks()
+        if name in MASKS and pa.types.is_integer(typ.value_type):
+            masks[MASKS[name]] = _mask_from_arrow(col)
+        elif pa.types.is_struct(typ.value_type) or pa.types.is_list(typ.value_type):
+            arrow[name] = pd.arrays.ArrowExtensionArray(pc.fill_null(col, pa.scalar([], typ)))
+        else:
+            lists[name] = _shared_lists(col.to_pylist())
+    plain = table.drop_columns([*lists, *arrow, *(c for c in MASKS if c in table.schema.names)])
+    plain = plain.cast(
+        pa.schema(
+            pa.field(f.name, pa.float64()) if pa.types.is_null(f.type) else f for f in plain.schema
+        )
+    )  # an all-null column (e.g. a breakdown only logged later): NaN, not None
+    df = plain.to_pandas()
+    order = table.schema.names
+    for name, values in {**lists, **arrow}.items():
+        df.insert(min(order.index(name), len(df.columns)), name, values)
+    for name, values in masks.items():
+        df[name] = values
+    return df
+
+
+def _shared_lists(values: list) -> list[list]:
+    """``values`` with nulls as ``[]`` and equal lists replaced by one object."""
+    seen: dict[tuple, list] = {}
+    return [seen.setdefault(tuple(v), v) if v else seen.setdefault((), []) for v in values]
+
+
+def _mask_dtype(top: int):
+    return np.int32 if top < 31 else np.int64
+
+
+def _mask_from_arrow(col: pa.ListArray) -> np.ndarray:
+    flat = pc.list_flatten(col).to_numpy(zero_copy_only=False)
+    parents = pc.list_parent_indices(col).to_numpy(zero_copy_only=False)
+    top = int(flat.max()) if len(flat) else 0
+    dtype = _mask_dtype(top)
+    out = np.zeros(len(col), dtype=dtype)
+    np.bitwise_or.at(out, parents, np.left_shift(dtype(1), flat.astype(dtype)))
+    return out
+
+
+def mask_from_lists(values: pd.Series) -> np.ndarray:
+    """Bitmask per row of a column of int lists (null/missing: 0)."""
+    lists = [v if isinstance(v, list) else [] for v in values]
+    top = max((max(v) for v in lists if v), default=0)
+    dtype = _mask_dtype(top)
+    return np.fromiter((sum(1 << int(a) for a in set(v)) for v in lists), dtype, len(lists))
+
+
+def mask_actions(mask: int) -> list[int]:
+    """The action ids set in one ``legal_mask`` value."""
+    mask = int(mask)
+    return [a for a in range(mask.bit_length()) if mask >> a & 1]
 
 
 def load_run(path: str | Path, root: str | Path | None = None) -> Run:
@@ -140,8 +235,10 @@ def _load_tables(path: Path, name: str, config: dict) -> Run:
         rounds.loc[boss_won, "ante"] -= 1
     if steps is not None:
         for col in ("jokers_before", "consumables_before"):
-            if col in steps:
-                steps[col] = [v if isinstance(v, list) else [] for v in steps[col]]
+            if col in steps:  # pandas fallback: nulls (and NaN) as []
+                steps[col] = _shared_lists(
+                    [v if isinstance(v, list) else None for v in steps[col]]
+                )
 
     return Run(
         name=name,

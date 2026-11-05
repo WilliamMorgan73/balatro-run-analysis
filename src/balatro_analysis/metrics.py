@@ -30,7 +30,8 @@ def filter_episodes(
     """Restrict a run (all its tables) to episodes in ``[start, end]`` that were
     played on one of ``decks`` / ``stakes`` and, for eval episodes, in one of
     ``eval_rounds`` (None = no filter).  ``run.eval`` keeps every eval round and
-    gets the deck/stake filter only (the episode range is for training)."""
+    gets the deck/stake filter only (the episode range is for training).  A filter
+    that keeps every episode returns ``run`` itself."""
     e = run.episodes
     keep = (e["episode"] >= start) & (e["episode"] <= end)
     if decks is not None:
@@ -39,6 +40,9 @@ def filter_episodes(
         keep &= e["stake"].isin(stakes)
     if eval_rounds is not None and "eval_round" in e:
         keep &= e["eval_round"].isin(eval_rounds)
+    filtered_eval = filter_episodes(run.eval, 0, np.inf, decks, stakes) if run.eval else None
+    if keep.all() and filtered_eval is run.eval:
+        return run  # nothing filtered out: no copy, and what it has memoised is reused
     episodes = set(e.loc[keep, "episode"])
 
     def cut(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -56,7 +60,7 @@ def filter_episodes(
         shops=cut(run.shops),
         hands=cut(run.hands),
         decks=cut(run.decks),
-        eval=filter_episodes(run.eval, 0, np.inf, decks, stakes) if run.eval else None,
+        eval=filtered_eval,
     )
 
 

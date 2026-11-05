@@ -89,3 +89,43 @@ def test_max_ante_is_the_ante_reached(copied_runs):
     assert run.episodes["final_ante"].tolist() == [2, 9, 1]
     s = metrics.summary([run]).iloc[0]
     assert s["max ante"] == 8 and s["mean ante"] == 4
+
+
+def test_legal_is_a_bitmask(run):
+    from balatro_analysis.loader import mask_actions
+
+    assert "legal" not in run.steps
+    assert mask_actions(run.steps.loc[0, "legal_mask"]) == [0, 1, 2, 16]
+    assert mask_actions(run.steps.loc[1, "legal_mask"]) == [5, 15, 16]
+
+
+def test_equal_held_lists_are_shared(run):
+    held = run.steps["consumables_before"]
+    assert all(v == [] for v in held)
+    assert len({id(v) for v in held}) == 1
+
+
+def test_arrow_and_pandas_readers_agree(copied_runs, monkeypatch):
+    """The pandas fallback (logs Arrow can't type) reads the same values."""
+    import pandas as pd
+    import pyarrow as pa
+
+    from balatro_analysis import loader
+
+    arrow = load_run(copied_runs / "run_small", copied_runs)
+
+    def refuse(*args, **kwargs):
+        raise pa.ArrowInvalid("mixed types")
+
+    monkeypatch.setattr(loader.pj, "read_json", refuse)
+    fallback = load_run(copied_runs / "run_small", copied_runs)
+    for table in ("steps", "rounds", "shops"):
+        a, b = getattr(arrow, table), getattr(fallback, table)
+        if a is None:
+            assert b is None
+            continue
+        assert list(a.columns) == list(b.columns), table
+        for col in a:
+            x = [list(v) if hasattr(v, "__len__") and not isinstance(v, str) else v for v in a[col]]
+            y = [list(v) if hasattr(v, "__len__") and not isinstance(v, str) else v for v in b[col]]
+            assert pd.Series(x, dtype=object).equals(pd.Series(y, dtype=object)), (table, col)

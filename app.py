@@ -96,14 +96,14 @@ def cli_runs_dir() -> Path:
 
 # cache_resource hands back the cached Run itself: cache_data would unpickle every
 # run (hundreds of MB) on each rerun.  Nothing writes to it; tabs filter copies.
-@st.cache_resource(show_spinner="Loading run…", max_entries=256)
+@st.cache_resource(show_spinner="Loading run…", max_entries=24)
 def cached_run(path: str, root: str, mtime: float, pkg_mtime: float) -> Run:
     # mtime: re-written runs reload; pkg_mtime: never reuse Runs from old code.
     # Runs unchanged since a previous session come from the disk cache.
     return runcache.load_run_cached(path, root, runcache.cache_dir())
 
 
-@st.cache_resource(max_entries=128)
+@st.cache_resource(max_entries=16)  # each entry can be a full copy of a run
 def cached_filtered(
     _run: Run, key: tuple, start: float, end: float, decks: tuple, stakes: tuple, rounds
 ) -> Run:

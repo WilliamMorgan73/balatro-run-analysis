@@ -2,8 +2,10 @@
 every run's JSONL logs (seconds per run) when nothing has changed.
 
 Each run is pickled to one file in the cache folder with a fingerprint of its
-source files (size and mtime), of ``loader.py`` and of the pandas version; any
-mismatch, or a cache that can't be read, parses the run again and rewrites it.
+source files (size and mtime), of ``loader.py`` and of the pandas and pyarrow
+versions; any mismatch, or a cache that can't be read, parses the run again and
+rewrites it.  Whenever a run is written, cached files not used for ``STALE_DAYS``
+(deleted or renamed runs, old fingerprints) are removed.
 
 The folder is ``$BALATRO_ANALYSIS_CACHE``, else ``$XDG_CACHE_HOME/balatro-analysis``,
 else ``~/.cache/balatro-analysis``.  ``BALATRO_ANALYSIS_CACHE=0`` (or empty)
@@ -15,14 +17,17 @@ from __future__ import annotations
 import hashlib
 import os
 import pickle
+import time
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
 
 from balatro_analysis import loader
 from balatro_analysis.loader import EVAL_DIR, Run, load_run
 
 ENV = "BALATRO_ANALYSIS_CACHE"
+STALE_DAYS = 30  # cached runs not read or written for this long are deleted
 SOURCES = (
     "episodes.csv",
     "config.json",
@@ -59,7 +64,7 @@ def fingerprint(path: Path) -> tuple:
             if f.is_file():
                 st = f.stat()
                 files.append((str(f), st.st_size, st.st_mtime_ns))
-    return (_code_hash(), pd.__version__, tuple(files))
+    return (_code_hash(), pd.__version__, pa.__version__, tuple(files))
 
 
 def _cache_file(folder: Path, path: Path, root: str | Path | None) -> Path:
@@ -81,6 +86,7 @@ def load_run_cached(
         with file.open("rb") as fh:
             cached = pickle.load(fh)
         if cached["fingerprint"] == expected:
+            _touch(file)
             return cached["run"]
     except Exception:  # missing, stale format or corrupt: parse it again
         pass
@@ -93,4 +99,24 @@ def load_run_cached(
         os.replace(tmp, file)
     except OSError:  # read-only or full disk: run without the cache
         tmp.unlink(missing_ok=True)
+    remove_stale(folder)
     return run
+
+
+def _touch(file: Path) -> None:
+    """Mark a cached run as used (its mtime), so ``remove_stale`` keeps it."""
+    try:
+        os.utime(file)
+    except OSError:
+        pass
+
+
+def remove_stale(folder: Path, days: float = STALE_DAYS) -> None:
+    """Delete cached runs (and leftover temp files) not used for ``days``."""
+    cutoff = time.time() - days * 86400
+    for f in [*folder.glob("*.pkl"), *folder.glob("*.tmp")]:
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+        except OSError:  # gone already, or not ours to delete
+            pass
