@@ -104,8 +104,9 @@ RUNS_KEPT = 24  # runs held in memory across reruns and sessions
 # The cached Runs themselves (not copies): cache_data would unpickle every run
 # (hundreds of MB) on each rerun.  Nothing writes to them; tabs filter copies.  A
 # plain dict rather than caching ``cached_run``, which may draw the progress bar.
+# Values are (run, the pkg_mtime it was last served under).
 @st.cache_resource
-def run_store() -> collections.OrderedDict[tuple, Run]:
+def run_store() -> collections.OrderedDict[tuple, tuple[Run, float]]:
     return collections.OrderedDict()
 
 
@@ -117,21 +118,37 @@ def run_locks() -> tuple[threading.Lock, dict[tuple, threading.Lock]]:
     return threading.Lock(), {}
 
 
+def _sub_runs(run: Run) -> list[Run]:
+    return [r for r in (run, run.eval) if r is not None]
+
+
+def _served(store: collections.OrderedDict, key: tuple, pkg_mtime: float) -> Run:
+    """The stored run for ``key``, its memoised frames dropped if the package
+    changed since it was last served (they were built by the old code)."""
+    store.move_to_end(key)
+    entry = store[key]
+    if entry[1] != pkg_mtime:
+        for r in _sub_runs(entry[0]):
+            r._memo.clear()
+        store[key] = (entry[0], pkg_mtime)
+    return entry[0]
+
+
 def cached_run(path: str, root: str, mtime: float, pkg_mtime: float, progress=None) -> Run:
-    # mtime: re-written runs reload; pkg_mtime: never reuse Runs from old code.
-    # Runs unchanged since a previous session come from the disk cache.
-    store, key = run_store(), (path, root, mtime, pkg_mtime)
+    # mtime: re-written runs reload.  The key holds the loading code's version, not
+    # pkg_mtime, so editing the rest of the package keeps loaded runs (dropping only
+    # what was memoised on them).  Runs unchanged since a previous session come
+    # from the disk cache.
+    store, key = run_store(), (path, root, mtime, runcache.code_version())
     guard, locks = run_locks()
     with guard:
         if key in store:
-            store.move_to_end(key)
-            return store[key]
+            return _served(store, key, pkg_mtime)
         lock = locks.setdefault(key, threading.Lock())
     with lock:
         with guard:  # loaded by another session while this one waited
             if key in store:
-                store.move_to_end(key)
-                return store[key]
+                return _served(store, key, pkg_mtime)
         try:
             run = runcache.load_run_cached(path, root, runcache.cache_dir(), progress)
         except BaseException:
@@ -139,7 +156,9 @@ def cached_run(path: str, root: str, mtime: float, pkg_mtime: float, progress=No
                 locks.pop(key, None)
             raise
         with guard:  # stored and unlocked together, so no session loads it twice
-            store[key] = run
+            for old in [k for k in store if k[:2] == key[:2]]:
+                del store[old]  # an older copy of this run: don't hold both
+            store[key] = (run, pkg_mtime)
             locks.pop(key, None)
             while len(store) > RUNS_KEPT:
                 store.popitem(last=False)

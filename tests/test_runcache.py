@@ -91,3 +91,19 @@ def test_stale_files_are_removed(tmp_path):
     runcache.load_run_cached(root / "run_v5", root, cache)
     assert not old.exists() and recent.exists()
     assert len(list(cache.glob("*.pkl"))) == 2  # recent + the run just cached
+
+
+def test_code_text_ignores_comments_and_docstrings():
+    src = 'def f(x):\n    """Doc."""\n    return x + 1\n'
+    edited = (
+        '# a comment\ndef f(x):\n    """Other doc,\n    longer."""\n\n    return x + 1  # why\n'
+    )
+    changed = 'def f(x):\n    """Doc."""\n    return x + 2\n'
+    assert runcache._code_text(src) == runcache._code_text(edited)
+    assert runcache._code_text(src) != runcache._code_text(changed)
+    assert runcache._code_text('def g():\n    "only a docstring"\n')  # still valid
+
+
+def test_code_version_is_stable():
+    assert runcache.code_version() == runcache.code_version()
+    assert runcache.code_version() in runcache.fingerprint(V5 / "run_v5")
