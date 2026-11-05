@@ -604,6 +604,8 @@ def test_overview_iqm_and_power_for_runs(eval_runs_dir):
     # run_b is exactly one ante better on every shared seed: any difference shows
     assert next(m for m in at.metric if m.label == "Detectable now").value == "0.00 ante"
     assert not [w for w in at.warning if "reliably detect" in w.value]
+    assert any("Probability of improvement" in c.value for c in at.caption)
+    assert any("Performance profile (Agarwal" in c.value for c in at.caption)
 
 
 def test_overview_iqm_and_power_for_groups(group_runs_dir):
@@ -619,3 +621,6 @@ def test_overview_iqm_and_power_for_groups(group_runs_dir):
     at.number_input(key="power_target").set_value(50.0).run()
     assert not at.exception
     assert not [w for w in at.warning if "reliably detect" in w.value]
+    assert any("Probability of improvement" in c.value for c in at.caption)
+    profile = next(c.value for c in at.caption if c.value.startswith("Performance profile"))
+    assert "one line per group" in profile

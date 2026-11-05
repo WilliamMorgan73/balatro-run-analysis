@@ -41,6 +41,7 @@ def _add_bands(fig: go.Figure, df: pd.DataFrame, x: str, metric: str) -> None:
             go.Scatter(
                 x=[*g[x], *g[x][::-1]],
                 y=[*g[f"{metric} high"], *g[f"{metric} low"][::-1]],
+                mode="lines",  # Plotly marks every vertex of a short trace by default
                 fill="toself",
                 fillcolor=_translucent(line.line.color, 0.18),
                 line={"width": 0},
@@ -102,6 +103,27 @@ def by_deck(df: pd.DataFrame, names: Names) -> go.Figure:
         title="Mean ante by deck and stake",
     )
     return _fig(fig, xaxis_title="")
+
+
+def performance_profile(df: pd.DataFrame, names: Names) -> go.Figure:
+    """Share of games reaching ante >= k (``stats.performance_profile``), one line
+    per run or group, with its 95% bootstrap band."""
+    df = df.rename(columns={"group": "run"})
+    fig = px.line(
+        df,
+        x="ante",
+        y="fraction",
+        color="run",
+        markers=True,
+        hover_data=["games", "method"],
+        labels=_labels(names, "run", "games", "method")
+        | {"ante": "Ante k", "fraction": "Share of games reaching ante ≥ k"},
+        title="Performance profile (95% CI)",
+    )
+    _add_bands(fig, df, "ante", "fraction")
+    fig.update_xaxes(dtick=1)
+    fig.update_yaxes(tickformat=".0%", range=[0, 1.02])
+    return _fig(fig, hovermode="x unified")
 
 
 def ante_distribution(df: pd.DataFrame, names: Names) -> go.Figure:

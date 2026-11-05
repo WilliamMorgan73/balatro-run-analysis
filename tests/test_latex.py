@@ -45,7 +45,14 @@ def test_run_tables(runs_dir, tmp_path):
     for name in ("run_a", "run_b"):
         shutil.copytree(runs_dir / "run_small", tmp_path / name)
     tables = latex.tables(load_runs(tmp_path))
-    assert list(tables) == ["summary", "summary_ci", "run_comparison"]  # no groups
+    assert list(tables) == [  # no groups
+        "summary",
+        "summary_ci",
+        "run_comparison",
+        "iqm",
+        "improvement",
+        "power",
+    ]
     for name, tex in tables.items():
         assert _balanced(tex), name
         assert tex.count(r"\toprule") == tex.count(r"\bottomrule") == 1
@@ -55,11 +62,23 @@ def test_run_tables(runs_dir, tmp_path):
     assert r"\resizebox" in tables["run_comparison"]  # wide
     assert r"\resizebox" not in tables["summary_ci"]
     assert "Red Deck" in tables["summary"]  # in-game names
+    # identical runs on the same seeds: paired, and exactly no improvement
+    assert "0.500 [0.500, 0.500] & paired games" in tables["improvement"]
+    assert r"$P(X > Y)$" in tables["improvement"] and "Agarwal" in tables["iqm"]
+    assert r"$\alpha = 0.05$" in tables["power"] and "Games for 0.25" in tables["power"]
 
 
 def test_group_tables(group_runs_dir):
     tables = latex.tables(load_runs(group_runs_dir))
-    assert {"group_summary", "group_comparison"} <= set(tables)
+    assert {
+        "group_summary",
+        "group_comparison",
+        "group_iqm",
+        "group_improvement",
+        "group_power",
+    } <= set(tables)
+    assert r"SD$_{\mathrm{seed}}$" in tables["group_power"]
+    assert tables["group_iqm"].count(r"\\") == 3  # header + 2 groups
     rows = [line for line in tables["group_summary"].splitlines() if line.endswith(r"\\")]
     assert len(rows) == 3  # header + 2 groups
     assert rows[1].startswith("a & 3 & 9 & ")
@@ -71,4 +90,11 @@ def test_export_zip_has_latex(group_runs_dir):
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         names = z.namelist()
         assert "latex/group_comparison.tex" in names
+        assert {"latex/group_iqm.tex", "latex/group_power.tex"} <= set(names)
+        for table in ("iqm", "group_iqm", "performance_profile", "improvement", "group_power"):
+            assert f"tables/{table}.csv" in names, table
+        assert "sized for a difference of 0.25" in z.read("README.txt").decode()
+    data = export.export_zip(load_runs(group_runs_dir), {}, target=1.5)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        assert "Seeds for 1.50" in z.read("latex/group_power.tex").decode()
         assert "latex/summary_ci.tex" in z.read("README.txt").decode()

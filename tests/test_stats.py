@@ -286,3 +286,80 @@ def test_variance_components_and_seeds_needed():
     assert row["sd_seed"] == 0 and row["seeds_needed_any_games"] is None
     single = [_run("solo", [1, 2, 3])]
     assert stats.power_groups(single).empty
+
+
+# --- Performance profiles and probability of improvement ----------------------
+
+
+def test_performance_profile_hand_computed():
+    p = stats.performance_profile([_run("a", [1, 2, 2, 3])])
+    assert p["ante"].tolist() == [1, 2, 3]
+    assert p["fraction"].tolist() == [1.0, 0.75, 0.25]
+    assert (p["fraction low"] <= p["fraction"]).all() and (
+        p["fraction"] <= p["fraction high"]
+    ).all()
+    assert p.loc[0, "fraction low"] == p.loc[0, "fraction high"] == 1.0  # everyone reaches ante 1
+
+
+def test_performance_profile_groups_use_shared_games():
+    seeds = [f"S{i}" for i in range(30)]
+    rng = np.random.default_rng(5)
+    members = [_eval_run(f"g_s{i}", rng.integers(1, 9, 30), seeds, "g") for i in range(3)]
+    p = stats.performance_profile(members, by_group=True)
+    assert set(p["group"]) == {"g"} and set(p["method"]) == {stats.SHARED_GAMES}
+    assert p["games"].iloc[0] == 30 and p["runs"].iloc[0] == 3
+    cells = stats.score_matrix(members).ravel()
+    assert p["fraction"].tolist() == pytest.approx([(cells >= k).mean() for k in p["ante"]])
+    assert p["fraction"].is_monotonic_decreasing
+
+
+def test_improvement_unpaired_matches_mann_whitney():
+    a = _run("a", [1, 2, 3, 3, 4, 5], seeds=[f"A{i}" for i in range(6)])
+    b = _run("b", [1, 1, 2, 3, 3], seeds=[f"B{i}" for i in range(5)])
+    row = stats.improvement([b, a], "b").iloc[0]
+    _, rank_biserial = stats.mann_whitney(
+        a.episodes["ante"].to_numpy(), b.episodes["ante"].to_numpy()
+    )
+    assert row["method"] == stats.WITHIN_RUNS
+    assert row["p_improvement"] == pytest.approx((rank_biserial + 1) / 2)
+    assert row["p_low"] <= row["p_improvement"] <= row["p_high"]
+    back = stats.improvement([a, b], "a").iloc[0]
+    assert back["p_improvement"] == pytest.approx(1 - row["p_improvement"])
+
+
+def test_improvement_paired_runs():
+    seeds = ["S1", "S2", "S3", "S4"]
+    a = _run("a", [2, 3, 3, 5], seeds=seeds)
+    b = _run("b", [1, 3, 4, 5], seeds=seeds)
+    row = stats.improvement([b, a], "b").iloc[0]
+    assert row["method"] == "paired games"
+    assert row["p_improvement"] == pytest.approx((1 + 0.5 + 0 + 0.5) / 4)
+    same = stats.improvement([b, _run("b2", [1, 3, 4, 5], seeds=seeds)], "b").iloc[0]
+    assert same["p_improvement"] == same["p_low"] == same["p_high"] == 0.5
+
+
+def test_improvement_groups_match_rliable():
+    seeds = [f"S{i}" for i in range(6)]
+    rng = np.random.default_rng(7)
+    a = [_eval_run(f"a_s{i}", rng.integers(1, 9, 6), seeds, "a") for i in range(3)]
+    b = [_eval_run(f"b_s{i}", rng.integers(1, 9, 6), seeds, "b") for i in range(2)]
+    row = stats.improvement([*b, *a], "b", by_group=True).iloc[0]
+    assert row["group"] == "a" and row["method"] == stats.SHARED_GAMES and row["games"] == 6
+    ma, mb = stats.score_matrix(a), stats.score_matrix(b)
+
+    def p_of(xa, xb):  # rliable: per task, share of seed pairs where a beats b
+        per_task = [
+            np.mean([(x > y) + 0.5 * (x == y) for x in xa[:, t] for y in xb[:, t]])
+            for t in range(xa.shape[1])
+        ]
+        return np.mean(per_task)
+
+    assert row["p_improvement"] == pytest.approx(p_of(ma, mb))
+    ra = np.random.default_rng(stats.SEED).integers(0, 3, size=(stats.N_BOOT, 3, 6))
+    rb = np.random.default_rng(stats.SEED + 1).integers(0, 2, size=(stats.N_BOOT, 2, 6))
+    t = np.arange(6)
+    boot = [p_of(ma[ra[i], t], mb[rb[i], t]) for i in range(stats.N_BOOT)]
+    assert (row["p_low"], row["p_high"]) == pytest.approx(
+        (np.quantile(boot, 0.025), np.quantile(boot, 0.975))
+    )
+    assert stats.improvement(a, "nope").empty

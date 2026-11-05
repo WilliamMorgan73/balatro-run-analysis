@@ -760,6 +760,59 @@ def iqm_table(by_group: bool) -> None:
     table(iq, column_config={names.column(c): num for c in ("mean", "iqm", "iqm_low", "iqm_high")})
 
 
+POI_HELP = (
+    "**Probability of improvement** (Agarwal et al. 2021): the chance that a game from this "
+    "{unit} reaches a higher ante than a game from the baseline, ties counting half. 0.5 means "
+    "no difference; a CI that excludes 0.5 is a reliable difference in either direction. Unlike "
+    "a difference in means it says how often one agent gets further, not by how much. "
+)
+
+
+def improvement_table(by_group: bool, baseline: str) -> None:
+    """``stats.improvement`` of each run / group over ``baseline``, with its caption."""
+    poi = stats.improvement(runs, baseline, by_group)
+    if not len(poi):
+        return
+    how = {
+        "paired games": "paired: compared game by game on the games both played, games "
+        "redrawn for the CI",
+        stats.SHARED_GAMES: "on the games every run played, per game over every pair of "
+        "seeds and averaged over games; CI by redrawing seeds within each game (rliable)",
+        stats.WITHIN_RUNS: "unpaired (no shared games); CI by redrawing episodes within each run",
+    }
+    used = "; ".join(f"*{m}*: {how[m]}" for m in poi["method"].unique())
+    st.caption(POI_HELP.format(unit="group" if by_group else "run") + used + ". 95% CI.")
+    num = st.column_config.NumberColumn(format="%.3f")
+    table(poi, column_config={names.column(c): num for c in ("p_improvement", "p_low", "p_high")})
+
+
+def profile_chart(by_group: bool) -> None:
+    """``stats.performance_profile`` of the selection as a chart."""
+    prof = stats.performance_profile(runs, by_group)
+    if not len(prof):
+        return
+    fig = plots.performance_profile(prof, names)
+    if by_group:
+        fig.update_layout(legend_title_text="Group")
+    chart(
+        fig,
+        "performance profile",
+        "Performance profile (Agarwal et al. 2021): for each ante k, the share of games that "
+        "reached ante k or further, one line per "
+        + ("group" if by_group else "run")
+        + ". It starts at 100% and falls where runs end, so it shows where along the run "
+        "each agent breaks down, which a single mean can't. A line above another at every k "
+        "dominates it. Band: 95% stratified bootstrap CI ("
+        + (
+            "training seeds redrawn within each shared game where the group's runs played the "
+            "same games, otherwise episodes within each run"
+            if by_group
+            else "episodes redrawn within the run"
+        )
+        + ").",
+    )
+
+
 def power_section(by_group: bool, baseline: str | None) -> None:
     """How small a difference in mean ante this selection can detect, and what it
     would take to detect a chosen one (``stats.power_runs`` / ``power_groups``)."""
@@ -907,6 +960,7 @@ with tabs[0]:
                         if c.endswith(("_diff", "_low", "_high", "_p"))
                     },
                 )
+                improvement_table(by_group=True, baseline=baseline)
             power_section(by_group=True, baseline=None)
         else:
             summary = metrics.summary(runs)
@@ -965,6 +1019,7 @@ with tabs[0]:
                     }
                     | {names.column(c): pval for c in ("mann_whitney_p", "fisher_p", "wilcoxon_p")},
                 )
+                improvement_table(by_group=False, baseline=baseline)
             power_section(by_group=False, baseline=baseline if len(runs) > 1 else None)
         if eval_runs:
             st.subheader("Evaluation on fixed seeds")
@@ -1022,6 +1077,7 @@ with tabs[0]:
                 "per run. Bars further right mean the agent gets further; winning means "
                 "clearing ante 8.",
             )
+            profile_chart(by_group)
         with st.expander("Run configs"):
             for r in runs:
                 st.markdown(f"**{r.name}**")
@@ -2008,7 +2064,14 @@ with export_area, st.expander("Export"):
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
     st.download_button(
         "Data (ZIP of CSVs)",
-        data=functools.partial(export.export_zip, runs, selection, window, top),
+        data=functools.partial(
+            export.export_zip,
+            runs,
+            selection,
+            window,
+            top,
+            st.session_state.get("power_target", 0.25),
+        ),
         file_name=f"balatro_runs_{stamp}.zip",
         mime="application/zip",
         key="dl_data",
