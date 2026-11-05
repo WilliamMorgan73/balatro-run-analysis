@@ -119,7 +119,7 @@ def run_locks() -> tuple[threading.Lock, dict[tuple, threading.Lock]]:
 
 
 def _sub_runs(run: Run) -> list[Run]:
-    return [r for r in (run, run.eval) if r is not None]
+    return [r for r in (run, run.eval, run.test) if r is not None]
 
 
 def _served(store: collections.OrderedDict, key: tuple, pkg_mtime: float) -> Run:
@@ -452,7 +452,7 @@ with st.sidebar:
     run_dirs = {str(p.relative_to(root)) if p != root else p.name: p for p in run_paths}
 
     def run_mtime(path: Path) -> float:
-        files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
+        files = [path / d / "episodes.csv" for d in ("", "eval", "test")]
         return max(f.stat().st_mtime for f in files if f.is_file())
 
     # A progress bar over every run's log bytes, only shown once a run is actually
@@ -574,25 +574,40 @@ with st.sidebar:
         st.stop()
     train_runs = runs
 
-    # Eval episodes (greedy, fixed seeds) replace the training episodes in every tab
-    with_eval = [r for r in runs if r.eval is not None]
-    eval_mode = bool(with_eval) and (
-        st.segmented_control(
+    # Eval episodes (greedy, fixed seeds) or the held-out test set replace the
+    # training episodes in every tab.  Test games work like one eval round.
+    phases = ["Training"]
+    if any(r.eval is not None for r in runs):
+        phases.append("Evaluation")
+    if any(r.test is not None for r in runs):
+        phases.append("Test")
+    phase = "Training"
+    if len(phases) > 1:
+        if st.session_state.get("phase") not in phases:
+            st.session_state.pop("phase", None)  # e.g. Test, with no test sets picked now
+        phase = st.segmented_control(
             "Episodes",
-            ["Training", "Evaluation"],
+            phases,
             default="Training",
             required=True,
             key="phase",
             help="Evaluation: greedy episodes on the fixed eval seeds (--eval-every). "
             "Every run plays the same eval games, so comparisons pair game by game. "
-            "Hand-by-hand replays are only recorded for these.",
+            "Hand-by-hand replays are only recorded for these."
+            + (
+                " Test: the final policy's greedy games on held-out TEST_ seeds "
+                "(--test-episodes), played once after training: the numbers to report."
+                if "Test" in phases
+                else ""
+            ),
         )
-        == "Evaluation"
-    )
+    eval_mode = phase != "Training"  # eval-format episodes: Evaluation or Test
+    test_mode = phase == "Test"
     if eval_mode:
-        if missing := [r.name for r in runs if r.eval is None]:
-            st.caption("No eval episodes, not shown: " + ", ".join(missing))
-        runs = [r.eval for r in with_eval]
+        attr, what = ("test", "test set") if test_mode else ("eval", "eval episodes")
+        if missing := [r.name for r in runs if getattr(r, attr) is None]:
+            st.caption(f"No {what}, not shown: " + ", ".join(missing))
+        runs = [getattr(r, attr) for r in runs if getattr(r, attr) is not None]
 
     filter_summary = st.empty()  # filled once the filters below are read
     with st.expander("Filter", icon=":material/filter_list:"):
@@ -603,7 +618,9 @@ with st.sidebar:
 
         max_ep = int(max(r.episodes["episode"].max() for r in runs))
         eval_rounds = None
-        if eval_mode:
+        if test_mode:
+            ep_range = (0, max_ep)  # one round, played after training
+        elif eval_mode:
             ep_range = (0, max_ep)
             all_rounds = sorted({int(x) for r in runs for x in r.episodes["eval_round"]})
             eval_round = st.selectbox(
@@ -631,11 +648,12 @@ with st.sidebar:
             return f"all {plural}" if len(every) > 1 else f(every[0])
         return ", ".join(f(x) for x in chosen)
 
-    scope = (
-        (f"eval round {eval_rounds[0]}" if eval_rounds else "every eval round")
-        if eval_mode
-        else f"episodes {ep_range[0]} to {ep_range[1]}"
-    )
+    if test_mode:
+        scope = "the held-out test games"
+    elif eval_mode:
+        scope = f"eval round {eval_rounds[0]}" if eval_rounds else "every eval round"
+    else:
+        scope = f"episodes {ep_range[0]} to {ep_range[1]}"
     filter_summary.caption(
         f"Showing {_which(decks, all_decks, names.deck, 'decks')}, "
         f"{_which(stakes, all_stakes, names.stake, 'stakes')}, {scope}."
@@ -718,7 +736,11 @@ def run_sheets() -> None:
             "No episodes under the current filters, not shown: "
             + ", ".join(empty)
             + "."
-            + (" Still training? Try an earlier eval round under Filter." if eval_mode else "")
+            + (
+                " Still training? Try an earlier eval round under Filter."
+                if eval_mode and not test_mode
+                else ""
+            )
         )
     if not sheet_runs:
         return
@@ -949,7 +971,14 @@ def power_section(by_group: bool, baseline: str | None) -> None:
 with tabs[0]:
     if tabs[0].open:
         run_sheets()
-        if eval_mode:
+        if test_mode:
+            st.info(
+                "Showing the **held-out test set**: greedy games played once after training "
+                "by the final policy, on TEST_ seeds never used for training or eval. These "
+                "are the numbers to report. Runs played the same games, so the paired "
+                "comparison below matches them game by game."
+            )
+        elif eval_mode:
             st.info(
                 "Showing **eval episodes** (greedy, fixed seeds), eval round "
                 f"{eval_rounds[0] if eval_rounds else 'all'}. Runs played the same games, "
@@ -1315,7 +1344,7 @@ with tabs[2]:
                         " These are **eval episodes**: with Eval round *All* under Filter and "
                         "one bin per eval round, each column is the greedy policy at that "
                         "point in training (round 0 is before any training)."
-                        if eval_mode
+                        if eval_mode and not test_mode
                         else ""
                     )
                 )
@@ -1786,13 +1815,15 @@ NO_HAND_LOG_EVAL = (
     "These eval episodes have no hand log. Runs from balatro-shop-rl with log_version 7 "
     "record every play and discard in eval/hands.jsonl; train again with --eval-every."
 )
+NO_HAND_LOG_TEST = "These test games have no hand log: test/hands.jsonl is missing or empty."
 
 
 def hand_log_missing(run_list: list[Run]) -> bool:
     """Say why there are no hands to show, if there aren't."""
     if any(hands.has_hands(r) for r in run_list):
         return False
-    st.info(NO_HAND_LOG_EVAL if eval_mode else NO_HAND_LOG_TRAINING, icon=":material/style:")
+    message = NO_HAND_LOG_TEST if test_mode else NO_HAND_LOG_EVAL
+    st.info(message if eval_mode else NO_HAND_LOG_TRAINING, icon=":material/style:")
     return True
 
 
@@ -2111,13 +2142,16 @@ with tabs[8]:
 
 # --- Export (sidebar, after every chart is registered) --------------------
 with export_area, st.expander("Export"):
+    if test_mode:
+        exported = "held-out test set"
+    elif eval_mode:
+        exported = f"eval round {eval_rounds[0] if eval_rounds else 'all'}"
+    else:
+        exported = f"{ep_range[0]}-{ep_range[1]}"
     selection = {
+        "phase": phase,
         "runs": ", ".join(run_names),
-        "episodes": (
-            f"eval round {eval_rounds[0] if eval_rounds else 'all'}"
-            if eval_mode
-            else f"{ep_range[0]}-{ep_range[1]}"
-        ),
+        "episodes": exported,
         "decks": ", ".join(decks),
         "stakes": ", ".join(stakes),
         "rolling window": window,
@@ -2133,8 +2167,9 @@ with export_area, st.expander("Export"):
             window,
             top,
             st.session_state.get("power_target", 0.25),
+            phase,
         ),
-        file_name=f"balatro_runs_{stamp}.zip",
+        file_name=f"balatro_{'test' if test_mode else 'runs'}_{stamp}.zip",
         mime="application/zip",
         key="dl_data",
         on_click="ignore",

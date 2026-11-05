@@ -18,17 +18,29 @@ A **run** is one folder, `runs/<run-name>/`:
 | `eval/` | the same files for greedy eval episodes | with `--eval-every N` |
 | `eval/hands.jsonl` | one per play or discard in an eval episode | with `--eval-every N`, unless `--no-step-log` |
 | `eval/decks.jsonl` | one per blind of an eval episode: the deck and hand levels | with `--eval-every N`, unless `--no-step-log` |
+| `test/` | the eval files for the held-out test set (see [Test set](#test-set)) | with `--test-episodes N` (log_version 14) |
 | `q_table.json` | the learned table | `--shop qlearn` only |
 | `events.out.tfevents.*` | tensorboard scalars | with the `train` extra installed |
 
 The `.jsonl` files and `episodes.csv` are flushed row by row, so a run still training can be
-read up to its last line.
+read up to its last line. They are only ever appended to, which lets the dashboard read just
+the lines added since it last loaded a run.
+
+### Test set
+
+With `--test-episodes N`, once training ends the final policy plays `N` greedy games on
+held-out seeds `<test_seed_prefix>_0`, `_1`, ... (config `test_episodes`,
+`test_seed_prefix`, default `TEST`), never used for training or eval. They are logged in
+`test/` exactly like `eval/`, as a single eval round (`eval_round` 0, `train_episodes` the
+training episodes played). `test/` has no `config.json` of its own: it is the run's. The
+dashboard reads it as the run's test set (*Episodes* → *Test*), not as a run of its own.
+These games are the ones to report final results from.
 
 ## config.json
 
 Every command-line option of `scripts/train.py` (`episodes`, `play`, `shop`, `seed`,
 `seed_prefix`, `decks`, `stakes`, `run_name`, `group`, `eval_every`, `eval_episodes`,
-`eval_seed_prefix`, the Q-learning and heuristic parameters, ...), plus:
+`eval_seed_prefix`, `test_episodes`, `test_seed_prefix`, the Q-learning and heuristic parameters, ...), plus:
 
 | Key | Meaning |
 | --- | --- |
@@ -173,5 +185,5 @@ path as logged.
 | 11 | `dqn.jsonl` `fn_table` and `redrawn`; `agent_params` `discount_per` |
 | 12 | `--round-features` (`agent_params` `round_features`) |
 | 13 | `--relative-suits` (config `relative_suits`) |
-| 14 | Training seeds `TRAIN_s<seed>_<n>` (config `seed_prefix`); optional `test/` folder in the eval format (`--test-episodes`). Not read as part of the run here yet: each `test/` loads as a run of its own |
+| 14 | Training seeds `TRAIN_s<seed>_<n>` (config `seed_prefix`); optional `test/` folder in the eval format (`--test-episodes`, see [Test set](#test-set)) |
 | 15 | A scaling joker's current values: `s` on its entry in `hands.jsonl` `jokers`, and `steps.jsonl` `joker_state` (see [Scaling jokers](#scaling-jokers)) |
