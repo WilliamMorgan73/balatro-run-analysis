@@ -2,10 +2,15 @@
 every run's JSONL logs (seconds per run) when nothing has changed.
 
 Each run is pickled to one file in the cache folder with a fingerprint of its
-source files (size and mtime), of ``loader.py`` and of the pandas and pyarrow
-versions; any mismatch, or a cache that can't be read, parses the run again and
-rewrites it.  Whenever a run is written, cached files not used for ``STALE_DAYS``
-(deleted or renamed runs, old fingerprints) are removed.
+source files (size and mtime), of the loading code (``code_version``: edits to
+comments and docstrings don't count) and of the pandas and pyarrow versions; any
+mismatch, or a cache that can't be read, parses the run again and rewrites it.
+Whenever a run is written, cached files not used for ``STALE_DAYS`` (deleted or
+renamed runs, old fingerprints) are removed.
+
+A run whose logs have only grown since it was cached (still training), loaded by
+the same code with the same ``config.json``, is brought up to date by reading
+just the new lines (``loader.extend_run``) rather than parsed again.
 
 The folder is ``$BALATRO_ANALYSIS_CACHE``, else ``$XDG_CACHE_HOME/balatro-analysis``,
 else ``~/.cache/balatro-analysis``.  ``BALATRO_ANALYSIS_CACHE=0`` (or empty)
@@ -14,6 +19,7 @@ turns the cache off.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import os
 import pickle
@@ -24,7 +30,7 @@ import pandas as pd
 import pyarrow as pa
 
 from balatro_analysis import loader
-from balatro_analysis.loader import EVAL_DIR, LOG_FILES, Progress, Run, load_run
+from balatro_analysis.loader import EVAL_DIR, LOG_FILES, Progress, Run, extend_run, load_run
 
 ENV = "BALATRO_ANALYSIS_CACHE"
 STALE_DAYS = 30  # cached runs not read or written for this long are deleted
@@ -40,8 +46,38 @@ def cache_dir() -> Path | None:
     return Path(base) / "balatro-analysis"
 
 
-def _code_hash() -> str:
-    return hashlib.sha1(Path(loader.__file__).read_bytes()).hexdigest()
+_versions: dict[tuple, str] = {}
+
+
+def code_version() -> str:
+    """A hash of the code that decides what a loaded Run holds (``loader.py`` and
+    this module), ignoring comments, docstrings and formatting: Runs loaded by
+    code with the same version are the same, so they can be reused."""
+    files = [Path(loader.__file__), Path(__file__)]
+    stamp = tuple(f.stat().st_mtime_ns for f in files)
+    if stamp not in _versions:
+        h = hashlib.sha1()
+        for f in files:
+            h.update(_code_text(f.read_text()).encode())
+        _versions.clear()
+        _versions[stamp] = h.hexdigest()
+    return _versions[stamp]
+
+
+def _code_text(source: str) -> str:
+    """``source``'s syntax tree without docstrings (comments are already gone)."""
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if (
+            isinstance(body, list)
+            and body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            node.body = body[1:] or [ast.Pass()]
+    return ast.dump(tree)
 
 
 def fingerprint(path: Path) -> tuple:
@@ -56,7 +92,7 @@ def fingerprint(path: Path) -> tuple:
             if f.is_file():
                 st = f.stat()
                 files.append((str(f), st.st_size, st.st_mtime_ns))
-    return (_code_hash(), pd.__version__, pa.__version__, tuple(files))
+    return (code_version(), pd.__version__, pa.__version__, tuple(files))
 
 
 def _cache_file(folder: Path, path: Path, root: str | Path | None) -> Path:
@@ -64,31 +100,64 @@ def _cache_file(folder: Path, path: Path, root: str | Path | None) -> Path:
     return folder / f"{hashlib.sha1(key.encode()).hexdigest()}.pkl"
 
 
+def can_extend(old: tuple, new: tuple) -> bool:
+    """A run loaded with fingerprint ``old`` can be brought up to fingerprint
+    ``new`` by ``extend_run``: same code and library versions, same configs."""
+
+    def configs(fp: tuple) -> set:
+        return {f for f in fp[3] if f[0].endswith("config.json")}
+
+    return len(old) == len(new) == 4 and old[:3] == new[:3] and configs(old) == configs(new)
+
+
 def load_run_cached(
     path: str | Path,
     root: str | Path | None = None,
     folder: Path | None = None,
     progress: Progress | None = None,
+    previous: Run | None = None,
 ) -> Run:
     """``loader.load_run``, from the cache in ``folder`` when the run hasn't
     changed since it was cached.  ``folder=None``: no cache.  ``progress`` as for
-    ``load_run``; a cached copy reports once, as "cached copy"."""
+    ``load_run``; a cached copy reports once, as "cached copy".
+
+    ``previous``: this run as loaded earlier (by this function, from the same
+    ``path`` and ``root``), e.g. still in memory.  If only its logs have grown,
+    only the new lines are read, and the cache isn't read."""
     path = Path(path)
-    if folder is None:
-        return load_run(path, root, progress)
-    file = _cache_file(folder, path, root)
     expected = fingerprint(path)
-    try:
-        with file.open("rb") as fh:
-            if progress is not None:
-                progress("cached copy", 0.0)
-            cached = pickle.load(fh)
-        if cached["fingerprint"] == expected:
-            _touch(file)
-            return cached["run"]
-    except Exception:  # missing, stale format or corrupt: parse it again
-        pass
-    run = load_run(path, root, progress)
+    if previous is not None and previous._fingerprint == expected:
+        return previous
+    base = (
+        previous if previous is not None and can_extend(previous._fingerprint, expected) else None
+    )
+    file = _cache_file(folder, path, root) if folder is not None else None
+    if base is None and file is not None:
+        try:
+            with file.open("rb") as fh:
+                if progress is not None:
+                    progress("cached copy", 0.0)
+                cached = pickle.load(fh)
+            run = cached["run"]
+            if cached["fingerprint"] == expected:
+                run._fingerprint = expected
+                _touch(file)
+                return run
+            if can_extend(cached["fingerprint"], expected):
+                base = run
+        except Exception:  # missing, stale format or corrupt: parse it again
+            pass
+    run = None
+    if base is not None:
+        try:
+            run = extend_run(base, progress)
+        except Exception:  # anything unexpected: a full parse is always right
+            run = None
+    if run is None:
+        run = load_run(path, root, progress)
+    run._fingerprint = expected
+    if file is None:
+        return run
     if progress is not None:
         progress("saving to cache", 1.0)
     tmp = file.with_suffix(f".{os.getpid()}.tmp")
