@@ -624,3 +624,43 @@ def test_overview_iqm_and_power_for_groups(group_runs_dir):
     assert any("Probability of improvement" in c.value for c in at.caption)
     profile = next(c.value for c in at.caption if c.value.startswith("Performance profile"))
     assert "one line per group" in profile
+
+
+# --- Held-out test set (test/, log_version 14) ---------------------------------
+
+
+def _test_app(test_runs_dir: Path, tab: str = "Overview") -> AppTest:
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["runs_dir"] = str(test_runs_dir)
+    at.session_state["main_tab"] = tab
+    at.session_state["phase"] = "Test"
+    at.run()
+    return at
+
+
+def test_test_option_only_with_test_sets(eval_runs_dir, test_runs_dir):
+    at = _run(eval_runs_dir)
+    assert at.sidebar.segmented_control(key="phase").options == ["Training", "Evaluation"]
+    at = _run(test_runs_dir)
+    assert not at.exception
+    assert at.sidebar.multiselect[0].value == ["run_a", "run_b", "run_c"]  # no test/ runs
+    phase = at.sidebar.segmented_control(key="phase")
+    assert phase.options == ["Training", "Evaluation", "Test"]
+    phase.set_value("Test").run()
+    assert not at.exception
+    assert any("held-out test set" in i.value for i in at.info)
+    assert any("No test set, not shown: run_c" in c.value for c in at.sidebar.caption)
+    assert not any(s.label == "Eval round" for s in at.sidebar.selectbox)
+
+
+@pytest.mark.parametrize("tab", ["Overview", "Hands", "Episode explorer", "Actions"])
+def test_tabs_render_in_test_mode(test_runs_dir, tab):
+    at = _test_app(test_runs_dir, tab)
+    assert not at.exception
+
+
+def test_test_phase_falls_back_without_test_sets(test_runs_dir, eval_runs_dir):
+    at = _test_app(test_runs_dir)
+    at.text_input(key="runs_dir").set_value(str(eval_runs_dir)).run()
+    assert not at.exception
+    assert at.sidebar.segmented_control(key="phase").value == "Training"

@@ -84,6 +84,36 @@ def _with_eval(run_dir: Path, ante_shift: int = 0) -> None:
         shutil.copy(HANDS_DIR / name, run_dir / "eval" / name)
 
 
+def _with_test(run_dir: Path, ante_shift: int = 0) -> None:
+    """Give ``run_dir`` (which has an eval/ folder) a test/ folder: run_small's 3
+    episodes played once more on TEST_0..2 after 20 training episodes, as one
+    round in the eval format (log_version 14), with the eval hand log."""
+    e = pd.read_csv(RUNS_DIR / "run_small" / "episodes.csv")
+    e["seed"] = [f"TEST_{i}" for i in range(len(e))]
+    e["ante"] = e["ante"] + ante_shift
+    e["eval_round"] = 0
+    e["train_episodes"] = 20
+    (run_dir / "test").mkdir()
+    e.to_csv(run_dir / "test" / "episodes.csv", index=False)
+    for name in ("steps.jsonl", "rounds.jsonl", "shops.jsonl"):
+        shutil.copy(RUNS_DIR / "run_small" / name, run_dir / "test" / name)
+    for name in ("hands.jsonl", "decks.jsonl"):  # plays of episode 0 (and 3: not in test)
+        shutil.copy(HANDS_DIR / name, run_dir / "test" / name)
+
+
+@pytest.fixture
+def test_runs_dir(tmp_path: Path) -> Path:
+    """eval_runs_dir's two runs, each with a held-out test set; run_b is two
+    antes better on it.  run_c has eval episodes but no test set."""
+    root = tmp_path / "test_runs"
+    _with_eval(root / "run_a")
+    _with_test(root / "run_a")
+    _with_eval(root / "run_b", ante_shift=1)
+    _with_test(root / "run_b", ante_shift=2)
+    _with_eval(root / "run_c")
+    return root
+
+
 @pytest.fixture
 def eval_runs_dir(tmp_path: Path) -> Path:
     """Two runs with eval episodes on the same seeds; run_b is one ante better."""

@@ -23,6 +23,12 @@ from balatro_analysis import actions, economy, latex, loader, metrics, stats
 from balatro_analysis.loader import Run
 from balatro_analysis.names import DEFAULT_KEYS, Names
 
+PHASES = {
+    "Training": "training episodes",
+    "Evaluation": "eval episodes (greedy, on the fixed eval seeds)",
+    "Test": "held-out test set (the final policy's greedy games on TEST_ seeds, played "
+    "once after training): the results to report",
+}
 CHART_SIZE = {"width": 1600, "height": 900}
 PNG_SCALE = 2
 _PRETTY = Names(pretty=True)
@@ -167,9 +173,13 @@ def export_zip(
     window: int = 50,
     top: int = 15,
     target: float = 0.25,
+    phase: str = "Training",
 ) -> bytes:
     """ZIP with ``runs/<run>/{episodes,steps,rounds}.csv``, ``tables/*.csv``,
-    ``latex/*.tex`` (the main result tables) and a README."""
+    ``latex/*.tex`` (the main result tables) and a README.  ``phase`` names the
+    episodes ``runs`` hold (Training, Evaluation or Test); test-set tables are
+    named ``test_*`` so final results can't pass for eval-round ones."""
+    prefix = "test_" if phase == "Test" else ""
     buf = io.BytesIO()
     written: list[str] = []
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -188,14 +198,15 @@ def export_zip(
             if r.shops is not None:  # one row per offered item
                 put(f"{base}/shop_offers.csv", with_names(economy.offers(r), {"key": "item"}))
         for name, df in computed_tables(runs, window, top, target).items():
-            put(f"tables/{name}.csv", df)
+            put(f"tables/{prefix}{name}.csv", df)
         for name, tex in latex.tables(runs, target).items():
-            z.writestr(f"latex/{name}.tex", tex)
-            written.append(f"latex/{name}.tex")
+            z.writestr(f"latex/{prefix}{name}.tex", tex)
+            written.append(f"latex/{prefix}{name}.tex")
 
         lines = [
             "Balatro run analysis export",
             f"exported: {datetime.now().isoformat(timespec='seconds')}",
+            f"episodes: {PHASES.get(phase, phase)}",
             "",
             "Selection:",
             *(f"  {k}: {v}" for k, v in selection.items()),

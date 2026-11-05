@@ -15,7 +15,7 @@ uv run streamlit run app.py -- --runs-dir /path/to/runs       # or anywhere else
 
 The sidebar holds only what you are looking at: **Runs** (pick any number to overlay; *Find
 runs* searches and filters them), **Reload runs** to pick up new runs and new episodes, the
-*Training* / *Evaluation* switch, and **Filter** (deck, stake, episodes or eval round, rolling
+*Training* / *Evaluation* / *Test* switch, and **Filter** (deck, stake, episodes or eval round, rolling
 window), with a one-line summary of the filter above it. **Settings** holds the things set
 once: in-game names, the runs folder and the Balatro install (**Browse…** opens your
 desktop's folder dialog: kdialog, zenity, or Tk as a fallback).
@@ -136,6 +136,12 @@ settings plays the same eval games. `eval/` is loaded with its run (it isn't lis
 its own). The sidebar **Episodes** switch (*Training* / *Evaluation*) swaps every tab over to the
 eval episodes, and an **Eval round** picker (under Filter) defaults to the last round, which
 scores the final policy. Paired comparisons then match the runs game by game.
+
+Runs made with `--test-episodes` (`log_version` 14) also have a `test/` folder in the eval
+format: the final policy's greedy games on held-out `TEST_` seeds, played once after training.
+It is loaded as the run's test set (not a run of its own), and *Test* in the **Episodes** switch
+shows it everywhere eval episodes are shown: the numbers to report. Its exports name the tables
+`tables/test_*.csv` and `latex/test_*.tex`.
 
 From `log_version` 7, eval episodes also log every play and discard (`eval/hands.jsonl`) and the
 deck at each blind (`eval/decks.jsonl`), for the Hands tab and the explorer's Replay. Training
