@@ -135,7 +135,8 @@ def _served(store: collections.OrderedDict, key: tuple, pkg_mtime: float) -> Run
 
 
 def cached_run(path: str, root: str, mtime: float, pkg_mtime: float, progress=None) -> Run:
-    # mtime: re-written runs reload.  The key holds the loading code's version, not
+    # mtime: re-written runs reload, reading only what was appended if this run is
+    # still held from before.  The key holds the loading code's version, not
     # pkg_mtime, so editing the rest of the package keeps loaded runs (dropping only
     # what was memoised on them).  Runs unchanged since a previous session come
     # from the disk cache.
@@ -149,8 +150,11 @@ def cached_run(path: str, root: str, mtime: float, pkg_mtime: float, progress=No
         with guard:  # loaded by another session while this one waited
             if key in store:
                 return _served(store, key, pkg_mtime)
+            older = [v[0] for k, v in store.items() if k[:2] == key[:2] and k[3] == key[3]]
         try:
-            run = runcache.load_run_cached(path, root, runcache.cache_dir(), progress)
+            run = runcache.load_run_cached(
+                path, root, runcache.cache_dir(), progress, older[-1] if older else None
+            )
         except BaseException:
             with guard:
                 locks.pop(key, None)
@@ -512,11 +516,9 @@ with st.sidebar:
     if st.button(
         "Reload runs",
         icon=":material/refresh:",
-        help="Read the runs again, e.g. after a training run finished",
+        help="Pick up new runs, and new episodes of runs still training: only what "
+        "was logged since the last load is read",
     ):
-        with run_locks()[0]:
-            run_store().clear()
-        cached_filtered.clear()
         st.rerun()
 
     def pick_runs(names_: list[str]) -> None:
