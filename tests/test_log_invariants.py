@@ -88,8 +88,9 @@ def test_episode_totals_match_steps(run):
 def test_actions_are_legal_and_named(run):
     names = run.config["action_names"]
     s = run.steps
-    assert all(a in legal for a, legal in zip(s["action"], s["legal"], strict=True))
-    assert all(names.index("skip") in legal for legal in s["legal"])
+    legal = s["legal_mask"].to_numpy()  # bit a set = action a legal
+    assert ((legal >> s["action"].to_numpy()) & 1).all()
+    assert ((legal >> names.index("skip")) & 1).all()
     assert (s["action"].map(names.__getitem__) == s["action_name"]).all()
     for _, g in s.groupby("episode"):
         assert g["step"].tolist() == list(range(len(g)))

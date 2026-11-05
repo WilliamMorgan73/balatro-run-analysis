@@ -126,3 +126,11 @@ def test_summary_lists_decks(run):
 def test_metrics_are_key_only(run):
     assert list(metrics.most_bought([run]).columns) == ["run", "joker", "bought"]
     assert "deck name" not in metrics.by_deck([run])
+
+
+def test_filter_keeping_everything_is_the_run(run):
+    """No copy (and the run's memoised frames are reused) when nothing is cut."""
+    assert metrics.filter_episodes(run, 0, float("inf")) is run
+    decks = sorted(run.episodes["deck"].unique())
+    assert metrics.filter_episodes(run, 0, 99, decks=decks) is run
+    assert metrics.filter_episodes(run, 0, 0) is not run

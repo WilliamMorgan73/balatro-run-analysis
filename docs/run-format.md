@@ -1,4 +1,4 @@
-# Run format (log_version 6)
+# Run format (log_version 7)
 
 The contract between `balatro-shop-rl`, which writes runs (`src/shop_rl/runlog.py`,
 `shop_env.py`, `train.py`), and this dashboard, which only reads them
@@ -16,6 +16,8 @@ A **run** is one folder, `runs/<run-name>/`:
 | `rounds.jsonl` | one per blind played | unless `--no-step-log` |
 | `shops.jsonl` | one per shop offer (entering a shop, each reroll) | unless `--no-step-log` |
 | `eval/` | the same files for greedy eval episodes | with `--eval-every N` |
+| `eval/hands.jsonl` | one per play or discard in an eval episode | with `--eval-every N`, unless `--no-step-log` |
+| `eval/decks.jsonl` | one per blind of an eval episode: the deck and hand levels | with `--eval-every N`, unless `--no-step-log` |
 | `q_table.json` | the learned table | `--shop qlearn` only |
 | `events.out.tfevents.*` | tensorboard scalars | with the `train` extra installed |
 
@@ -33,7 +35,7 @@ Every command-line option of `scripts/train.py` (`episodes`, `play`, `shop`, `se
 | `play_agent`, `shop_agent` | class names, e.g. `StrongPlayAgent`, `QLearningShopAgent` |
 | `play_params`, `agent_params` | the agents' parameters (`{}` if none) |
 | `n_actions`, `action_names` | the shop action space: 17 names, index = action id |
-| `log_version` | this spec's version: 6 |
+| `log_version` | this spec's version: 7 |
 | `eval_set` | the eval games, `[{seed, deck, stake}, ...]` (`[]` without eval) |
 | `started` | local start time, ISO 8601 |
 | `shop_rl_commit` | `balatro-shop-rl` commit, `-dirty` if it had uncommitted changes; `null` outside git |
@@ -106,6 +108,43 @@ One object per shop offer:
 | `reroll_cost` | current reroll price |
 | `items` | `[{kind: card/voucher/pack, key, cost}, ...]` |
 
+## eval/hands.jsonl
+
+Eval episodes only: training episodes are many times more numerous, and this log is several
+times the size of `steps.jsonl`. One object per play or discard, in order:
+
+| Key | Meaning |
+| --- | --- |
+| `episode`, `ante`, `round`, `blind_key`, `target` | the blind (the ante it was played in) |
+| `hand_no` | 0-based play/discard number within the blind |
+| `kind` | `play` or `discard` |
+| `hand` | the cards held before acting, in hand order (see [Cards](#cards)) |
+| `picked` | indices into `hand` of the cards played or discarded (Cerulean Bell's forced card included) |
+| `hand_level` | the played hand's level when played (before scoring; Space Joker levels up during it); `null` for a discard |
+| `jokers` | jokers held when acting, in order: a key, or `{"k": key, "ed": edition}` |
+| `hand_type`, `chips`, `mult`, `score`, `debuffed` | the engine's scoring of a play (`score` = floor(chips × mult), inf past a double); `null` for a discard |
+| `chips_total` | the blind's score after this action |
+| `hands_left`, `discards_left`, `dollars` | after this action |
+
+## eval/decks.jsonl
+
+One object per blind of an eval episode, taken at its first hand:
+
+| Key | Meaning |
+| --- | --- |
+| `episode`, `ante`, `round`, `blind_key` | the blind, matching `rounds.jsonl` |
+| `deck` | every playing card the run owns (draw pile, hand, discards) |
+| `hand_levels` | `{hand type: level}` for hands above level 1 |
+| `hands_played` | `{hand type: times played}` this run, for hands played at least once |
+
+## Cards
+
+A plain card is its engine `card_key`: suit letter (`H C D S`) and rank (`2`-`9`, `T`, `J`, `Q`,
+`K`, `A`), e.g. `"H_A"`, `"S_T"`. A modified card is an object with only what differs:
+`{"c": "H_A", "en": "m_glass", "ed": "foil", "seal": "Red", "debuff": true}` (`en` an
+enhancement key, `ed` one of `foil`/`holo`/`polychrome`/`negative`, `seal` one of
+`Red`/`Blue`/`Gold`/`Purple`).
+
 ## Version history
 
 | Version | Change |
@@ -116,3 +155,4 @@ One object per shop offer:
 | 4 | Optional `eval/` with `eval_round` and `train_episodes` |
 | 5 | `earn_tags`; `earn_rent` filled in; `dollars_after_pack`; returns from a pack aren't new shop visits |
 | 6 | `episodes.csv` `max_ante`; ante reward only for a new highest ante; deck/stake from the env's own RNG; a sell's `item_cost` is its sale value. Since the repo split: `shop_rl_commit` and the pinned `jackdaw_commit` (additions only, so no version bump) |
+| 7 | `eval/hands.jsonl` and `eval/decks.jsonl` (additions only: older readers ignore them) |

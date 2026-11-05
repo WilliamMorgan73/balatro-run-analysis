@@ -5,7 +5,10 @@ No game art is stored in this repo. ``Balatro.exe`` (or ``Balatro.love``) is a
 LÖVE zip archive; its sprite atlases live at
 ``resources/textures/{1,2}x/{Jokers,Tarots,Vouchers,boosters,Enhancers}.png`` in
 71x95 cells (x scale); blind chips are in ``BlindChips.png``, 34x34 cells, one
-animation per row (the first frame is used).
+animation per row (the first frame is used).  Playing cards are built like the
+game draws them: the enhancement (or plain white base) from ``Enhancers.png``,
+the rank and suit from ``8BitDeck.png``, then the seal.  The pixel font is
+``resources/fonts/m6x11plus.ttf``.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from balatro_analysis.cards import RANKS, PlayingCard
 from balatro_analysis.catalog import blinds, centers
 
 CELL = (71, 95)
@@ -33,6 +37,22 @@ ATLASES = {
     "Back": "Enhancers.png",
     "Blind": "BlindChips.png",
 }
+# Playing cards (positions in Enhancers.png / 8BitDeck.png, as in the game's game.lua)
+DECK_ATLAS = "8BitDeck.png"
+DECK_ROWS = {"H": 0, "C": 1, "D": 2, "S": 3}
+ENHANCER_POS = {
+    None: (1, 0),  # plain white base
+    "m_gold": (6, 0),
+    "m_stone": (5, 0),
+    "m_bonus": (1, 1),
+    "m_mult": (2, 1),
+    "m_wild": (3, 1),
+    "m_lucky": (4, 1),
+    "m_glass": (5, 1),
+    "m_steel": (6, 1),
+}
+SEAL_POS = {"Gold": (2, 0), "Purple": (4, 4), "Red": (5, 4), "Blue": (6, 4)}
+FONT = "resources/fonts/m6x11plus.ttf"
 STRIP_GAP = 4  # px between icons in a strip, at scale 1
 ARCHIVE_NAMES = ("Balatro.exe", "Balatro.love", "Balatro")
 
@@ -97,7 +117,7 @@ class Sprites:
     def _atlas(self, set_name: str) -> Image.Image | None:
         if set_name not in self._atlases:
             image = None
-            filename = ATLASES.get(set_name)
+            filename = ATLASES.get(set_name, set_name if set_name.endswith(".png") else None)
             if filename:
                 with zipfile.ZipFile(self.archive) as z:
                     for scale in (self.scale, 1):
@@ -140,6 +160,41 @@ class Sprites:
 
     def data_uri(self, key: str | None) -> str | None:
         return _uri(self.png(key))
+
+    def card_png(self, card: PlayingCard) -> bytes | None:
+        """PNG of a playing card as the game draws it (no edition: that's a shader in
+        the game, drawn with CSS here), or None without the game."""
+        key = f"card:{card.suit}{card.rank}:{card.enhancement}:{card.seal}"
+        if key not in self._icons:
+            self._icons[key] = self._render_card(card)
+        return self._icons[key]
+
+    def card_uri(self, card: PlayingCard) -> str | None:
+        return _uri(self.card_png(card))
+
+    def _render_card(self, card: PlayingCard) -> bytes | None:
+        enhancers, deck = self._atlas("Enhancers.png"), self._atlas(DECK_ATLAS)
+        if enhancers is None or deck is None:
+            return None
+        x, y = ENHANCER_POS.get(card.enhancement, ENHANCER_POS[None])
+        image = self._cell(enhancers, {"x": x, "y": y}).copy()
+        if card.enhancement != "m_stone" and card.suit in DECK_ROWS and card.rank in RANKS:
+            face = {"x": RANKS.index(card.rank), "y": DECK_ROWS[card.suit]}
+            image = Image.alpha_composite(image, self._cell(deck, face))
+        if card.seal in SEAL_POS:
+            x, y = SEAL_POS[card.seal]
+            image = Image.alpha_composite(image, self._cell(enhancers, {"x": x, "y": y}))
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        return buf.getvalue()
+
+    def font_uri(self) -> str | None:
+        """The game's pixel font as a data URI (for ``@font-face``), or None."""
+        if "font" not in self._icons:
+            with zipfile.ZipFile(self.archive) as z:
+                self._icons["font"] = z.read(FONT) if FONT in z.namelist() else None
+        data = self._icons["font"]
+        return "data:font/ttf;base64," + base64.b64encode(data).decode() if data else None
 
     def strip_png(self, keys: list[str] | tuple[str, ...]) -> bytes | None:
         """PNG of the icons of ``keys`` side by side (keys without an icon are left

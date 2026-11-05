@@ -11,6 +11,7 @@ from PIL import Image
 from balatro_analysis.loader import Run, load_run
 
 RUNS_DIR = Path(__file__).parent / "fixtures" / "runs"
+HANDS_DIR = Path(__file__).parent / "fixtures" / "hands"
 
 # Colours painted into the fake atlases, so tests can check which cell was cut
 JOKER_COLOUR = (255, 0, 0, 255)  # j_joker at pos (0, 0)
@@ -18,6 +19,7 @@ SOUL_COLOUR = (0, 0, 255, 255)  # j_caino soul layer at (3, 9)
 DECK_COLOUR = (0, 255, 0, 255)  # b_black at pos (3, 2)
 BLIND_COLOUR = (255, 255, 0, 255)  # bl_hook chip at (0, 7)
 TAROT_COLOUR = (255, 0, 255, 255)  # c_hermit at (9, 0) in Tarots.png
+FACE_COLOUR = (0, 255, 255, 255)  # Ace of Hearts at (12, 0) in 8BitDeck.png
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +32,14 @@ def no_real_game(monkeypatch, tmp_path):
 def private_run_cache(monkeypatch, tmp_path):
     """Never read or write the developer's real run cache in tests."""
     monkeypatch.setenv("BALATRO_ANALYSIS_CACHE", str(tmp_path / "run-cache"))
+
+
+@pytest.fixture(autouse=True)
+def no_real_runs(monkeypatch):
+    """The app defaults to the developer's real training runs (hundreds of MB
+    each, pickled into the test's run cache) until a test sets ``runs_dir``:
+    point that default at the fixtures instead."""
+    monkeypatch.setattr("sys.argv", ["app.py", "--runs-dir", str(RUNS_DIR)])
 
 
 @pytest.fixture
@@ -70,6 +80,8 @@ def _with_eval(run_dir: Path, ante_shift: int = 0) -> None:
     pd.concat(rounds).to_csv(run_dir / "eval" / "episodes.csv", index=False)
     for name in ("steps.jsonl", "rounds.jsonl", "shops.jsonl"):
         shutil.copy(RUNS_DIR / "run_small" / name, run_dir / "eval" / name)
+    for name in ("hands.jsonl", "decks.jsonl"):  # log_version 7: plays of eval episodes 0 and 3
+        shutil.copy(HANDS_DIR / name, run_dir / "eval" / name)
 
 
 @pytest.fixture
@@ -101,7 +113,7 @@ def _atlas(
     scale: int, cells: dict[tuple[int, int], tuple], cell: tuple[int, int] = (71, 95)
 ) -> bytes:
     w, h = cell[0] * scale, cell[1] * scale
-    img = Image.new("RGBA", (10 * w, 16 * h), (0, 0, 0, 0))
+    img = Image.new("RGBA", (13 * w, 16 * h), (0, 0, 0, 0))
     for (x, y), colour in cells.items():
         img.paste(Image.new("RGBA", (w, h), colour), (x * w, y * h))
     buf = io.BytesIO()
@@ -121,6 +133,8 @@ def fake_game(tmp_path: Path) -> Path:
         )
         z.writestr("resources/textures/2x/Enhancers.png", _atlas(2, {(3, 2): DECK_COLOUR}))
         z.writestr("resources/textures/2x/Tarots.png", _atlas(2, {(9, 0): TAROT_COLOUR}))
+        z.writestr("resources/textures/2x/8BitDeck.png", _atlas(2, {(12, 0): FACE_COLOUR}))
+        z.writestr("resources/fonts/m6x11plus.ttf", b"not a real font")
         z.writestr("resources/textures/1x/Jokers.png", _atlas(1, {(0, 0): JOKER_COLOUR}))
         z.writestr(
             "resources/textures/2x/BlindChips.png", _atlas(2, {(0, 7): BLIND_COLOUR}, (34, 34))

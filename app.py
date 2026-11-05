@@ -17,17 +17,21 @@ import streamlit as st
 
 PACKAGE_DIR = Path(__file__).parent / "src" / "balatro_analysis"
 RELOAD_ORDER = [
+    "cards",
     "catalog",
     "names",
     "loader",
     "runcache",
     "metrics",
+    "hands",
     "economy",
     "actions",
     "plots",
     "sprites",
     "game_text",
+    "theme",
     "details",
+    "replay",
     "collection",
     "picker",
     "export",
@@ -62,10 +66,13 @@ from balatro_analysis import (  # noqa: E402
     economy,
     export,
     find,
+    hands,
     metrics,
     plots,
+    replay,
     runcache,
     stats,
+    theme,
 )
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
 from balatro_analysis.loader import Run, find_runs  # noqa: E402
@@ -89,14 +96,14 @@ def cli_runs_dir() -> Path:
 
 # cache_resource hands back the cached Run itself: cache_data would unpickle every
 # run (hundreds of MB) on each rerun.  Nothing writes to it; tabs filter copies.
-@st.cache_resource(show_spinner="Loading run…", max_entries=256)
+@st.cache_resource(show_spinner="Loading run…", max_entries=24)
 def cached_run(path: str, root: str, mtime: float, pkg_mtime: float) -> Run:
     # mtime: re-written runs reload; pkg_mtime: never reuse Runs from old code.
     # Runs unchanged since a previous session come from the disk cache.
     return runcache.load_run_cached(path, root, runcache.cache_dir())
 
 
-@st.cache_resource(max_entries=128)
+@st.cache_resource(max_entries=16)  # each entry can be a full copy of a run
 def cached_filtered(
     _run: Run, key: tuple, start: float, end: float, decks: tuple, stakes: tuple, rounds
 ) -> Run:
@@ -155,6 +162,7 @@ LOG_VERSIONS = {
     4: "eval episodes on fixed seeds (--eval-every)",
     5: "cash-out money from tags",
     6: "highest ante reached (max_ante); a sell's item_cost is its sale value",
+    7: "eval hand and deck logs",
 }
 
 
@@ -308,7 +316,6 @@ def deck_infos(keys: list[str]) -> list[details.DeckInfo]:
 
 
 st.set_page_config(page_title="Balatro Run Analysis", layout="wide")
-st.title("Balatro run analysis")
 
 if "runs_dir" not in st.session_state:
     st.session_state.runs_dir = str(cli_runs_dir())
@@ -317,28 +324,44 @@ if "game_path" not in st.session_state:
     st.session_state.game_path = str(found) if found else ""
 if "pretty" not in st.session_state:
     st.session_state.pretty = st.query_params.get("names", "game") != "keys"
+names = Names(pretty=st.session_state.pretty)  # the toggle itself is under Settings
+pkg_mtime = package_mtime()
+archive = game_archive(st.session_state.game_path) if st.session_state.game_path else None
+sprites = cached_sprites(str(archive), pkg_mtime) if archive else None
+st.html(theme.css(sprites.font_uri() if sprites else None))
+st.title("Balatro run analysis")
+
+
+def settings(expanded: bool = False) -> None:
+    """Things set once and left alone: naming, where runs and the game are."""
+    with st.expander("Settings", icon=":material/settings:", expanded=expanded):
+        st.toggle(
+            "In-game names",
+            key="pretty",
+            help="On: names as shown in the game (for presenting). "
+            "Off: exact keys like j_greedy_joker (for analysis).",
+        )
+        st.text_input("Runs folder", key="runs_dir")
+        st.button("Browse…", on_click=browse_runs_dir, key="browse_runs")
+        st.text_input("Balatro install", key="game_path", help="Folder or Balatro.exe/.love")
+        st.button("Browse…", on_click=browse_game, key="browse_game")
+        if err := st.session_state.pop("picker_error", None):
+            st.error(f"{err}. Type the path instead.")
+        if sprites:
+            st.caption(f"Card art, icons and font from {archive}")
+        else:
+            st.caption("Balatro not found: showing names only.")
+
 
 # --- Sidebar --------------------------------------------------------------
 with st.sidebar:
-    st.toggle(
-        "In-game names",
-        key="pretty",
-        help="On: names as shown in the game (for presenting). "
-        "Off: exact keys like j_greedy_joker (for analysis).",
-    )
-    names = Names(pretty=st.session_state.pretty)
-
-    st.text_input("Runs folder", key="runs_dir")
-    st.button("Browse…", on_click=browse_runs_dir, key="browse_runs")
-    if err := st.session_state.pop("picker_error", None):
-        st.error(f"{err}. Type the path instead.")
     root = Path(st.session_state.runs_dir).expanduser()
     run_paths = find_runs(root)
     if not run_paths:
-        st.warning(f"No runs (folders with episodes.csv) under {root}")
+        st.warning(f"No runs (folders with episodes.csv) under {root}. Set the runs folder below.")
+        settings(expanded=True)
         st.stop()
     run_dirs = {str(p.relative_to(root)) if p != root else p.name: p for p in run_paths}
-    pkg_mtime = package_mtime()
 
     def run_mtime(path: Path) -> float:
         files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
@@ -378,13 +401,21 @@ with st.sidebar:
     if hidden:
         st.caption(
             f"{len(hidden)} selected run{'s' if len(hidden) > 1 else ''} hidden by the "
-            "filters below: " + ", ".join(hidden)
+            "filters in Find runs: " + ", ".join(hidden)
         )
+    if st.button(
+        "Reload runs",
+        icon=":material/refresh:",
+        help="Read the runs again, e.g. after a training run finished",
+    ):
+        cached_run.clear()
+        cached_filtered.clear()
+        st.rerun()
 
     def pick_runs(names_: list[str]) -> None:
         st.session_state.picked_runs = names_
 
-    with st.expander("Find runs"):
+    with st.expander("Find runs", icon=":material/search:"):
         st.text_input("Search runs", key="run_search", placeholder="part of a run name")
         st.selectbox("Sort by", list(find.RUN_SORTS), key="run_sort")
         for label, col, key in (
@@ -418,6 +449,8 @@ with st.sidebar:
         b2.button("All shown", on_click=pick_runs, args=(shown_runs,))
         b3.button("Clear", on_click=pick_runs, args=([],))
     if not picked:
+        st.info("Pick at least one run above.")
+        settings()
         st.stop()
 
     runs = [loaded[n] for n in picked if loaded[n] is not None]
@@ -428,19 +461,22 @@ with st.sidebar:
             "unreadable. **Reload runs** once it has logged some."
         )
     if not runs:
+        settings()
         st.stop()
     train_runs = runs
 
     # Eval episodes (greedy, fixed seeds) replace the training episodes in every tab
     with_eval = [r for r in runs if r.eval is not None]
     eval_mode = bool(with_eval) and (
-        st.radio(
+        st.segmented_control(
             "Episodes",
             ["Training", "Evaluation"],
-            horizontal=True,
+            default="Training",
+            required=True,
             key="phase",
             help="Evaluation: greedy episodes on the fixed eval seeds (--eval-every). "
-            "Every run plays the same eval games, so comparisons pair game by game.",
+            "Every run plays the same eval games, so comparisons pair game by game. "
+            "Hand-by-hand replays are only recorded for these.",
         )
         == "Evaluation"
     )
@@ -449,42 +485,54 @@ with st.sidebar:
             st.caption("No eval episodes, not shown: " + ", ".join(missing))
         runs = [r.eval for r in with_eval]
 
-    all_decks = sorted({d for r in runs for d in r.episodes["deck"]})
-    all_stakes = sorted({s for r in runs for s in r.episodes["stake"]})
-    decks = st.multiselect("Decks", all_decks, default=all_decks, format_func=names.deck)
-    stakes = st.multiselect("Stakes", all_stakes, default=all_stakes, format_func=names.stake)
+    filter_summary = st.empty()  # filled once the filters below are read
+    with st.expander("Filter", icon=":material/filter_list:"):
+        all_decks = sorted({d for r in runs for d in r.episodes["deck"]})
+        all_stakes = sorted({s for r in runs for s in r.episodes["stake"]})
+        decks = st.multiselect("Decks", all_decks, default=all_decks, format_func=names.deck)
+        stakes = st.multiselect("Stakes", all_stakes, default=all_stakes, format_func=names.stake)
 
-    max_ep = int(max(r.episodes["episode"].max() for r in runs))
-    eval_rounds = None
-    if eval_mode:
-        ep_range = (0, max_ep)
-        all_rounds = sorted({int(x) for r in runs for x in r.episodes["eval_round"]})
-        eval_round = st.selectbox(
-            "Eval round",
-            ["All", *all_rounds],
-            index=len(all_rounds),
-            help="Eval round n is played after the training episodes shown in the Overview "
-            "eval chart. The last round scores the final policy.",
-        )
-        eval_rounds = None if eval_round == "All" else [eval_round]
-    else:
-        ep_range = st.slider("Episodes", 0, max(max_ep, 1), (0, max_ep))
-    window = st.slider("Rolling window", 1, max(2, max_ep + 1), min(50, max_ep + 1))
-    if st.button("Reload runs"):
-        cached_run.clear()
-        cached_filtered.clear()
-        st.rerun()
-
-    with st.expander("Game assets (icons)"):
-        st.text_input("Balatro install", key="game_path", help="Folder or Balatro.exe/.love")
-        st.button("Browse…", on_click=browse_game, key="browse_game")
-        archive = game_archive(st.session_state.game_path) if st.session_state.game_path else None
-        sprites = cached_sprites(str(archive), pkg_mtime) if archive else None
-        if sprites:
-            st.caption(f"Icons from {archive}")
+        max_ep = int(max(r.episodes["episode"].max() for r in runs))
+        eval_rounds = None
+        if eval_mode:
+            ep_range = (0, max_ep)
+            all_rounds = sorted({int(x) for r in runs for x in r.episodes["eval_round"]})
+            eval_round = st.selectbox(
+                "Eval round",
+                ["All", *all_rounds],
+                index=len(all_rounds),
+                help="Eval round n is played after the training episodes shown in the "
+                "Overview eval chart. The last round scores the final policy.",
+            )
+            eval_rounds = None if eval_round == "All" else [eval_round]
         else:
-            st.caption("Balatro not found: showing names only.")
+            ep_range = st.slider("Episodes", 0, max(max_ep, 1), (0, max_ep))
+        window = st.slider(
+            "Rolling window",
+            1,
+            max(2, max_ep + 1),
+            min(50, max_ep + 1),
+            help="Episodes averaged per point of the learning curves",
+        )
 
+    def _which(chosen: list, every: list, f, plural: str) -> str:
+        if not chosen:
+            return f"no {plural}"
+        if len(chosen) == len(every):
+            return f"all {plural}" if len(every) > 1 else f(every[0])
+        return ", ".join(f(x) for x in chosen)
+
+    scope = (
+        (f"eval round {eval_rounds[0]}" if eval_rounds else "every eval round")
+        if eval_mode
+        else f"episodes {ep_range[0]} to {ep_range[1]}"
+    )
+    filter_summary.caption(
+        f"Showing {_which(decks, all_decks, names.deck, 'decks')}, "
+        f"{_which(stakes, all_stakes, names.stake, 'stakes')}, {scope}."
+    )
+
+    settings()
     export_area = st.container()  # filled at the end, once every chart is registered
 
 
@@ -508,6 +556,7 @@ by_name = {r.name: r for r in runs}
 no_steps = any(r.steps is None for r in runs)
 no_rounds = any(r.rounds is None for r in runs)
 
+EPISODE_FILTERS = ("ep_decks", "ep_stakes", "ep_antes", "ep_outcome", "ep_jokers")
 TOP_JOKERS_DEFAULT = 15
 top = TOP_JOKERS_DEFAULT  # the Jokers tab's slider; the export reads it even when that tab is shut
 # Deep link ?run=<name>&episode=<n> opens that episode in the Episode explorer
@@ -529,15 +578,100 @@ tabs = st.tabs(
         "Jokers",
         "Joker collection",
         "Rounds",
+        "Hands",
         "Episode explorer",
     ],
     key="main_tab",
     on_change="rerun",
 )
 
+
+def show_episode(run_name: str, episode: int) -> None:
+    """Button callback: open ``episode`` of ``run_name`` in the Episode explorer."""
+    for key in EPISODE_FILTERS:
+        st.session_state.pop(key, None)
+    st.session_state.explorer_run = run_name
+    st.session_state.explorer_episode = episode
+    st.session_state.main_tab = "Episode explorer"
+
+
+RUN_SHEETS = 6  # run sheets shown before the rest fold away
+
+
+def run_sheets() -> None:
+    """Each selected run as the game's run-over screen, with buttons into its best
+    and worst episode: where to start reading."""
+    # A run can have no episodes under the filters, e.g. one still training that
+    # hasn't played the chosen eval round yet
+    sheet_runs = [r for r in runs if not r.episodes.empty]
+    if empty := [r.name for r in runs if r.episodes.empty]:
+        st.caption(
+            "No episodes under the current filters, not shown: "
+            + ", ".join(empty)
+            + "."
+            + (" Still training? Try an earlier eval round under Filter." if eval_mode else "")
+        )
+    if not sheet_runs:
+        return
+    ci = stats.summary_ci(sheet_runs)
+    ci = ci[ci["outcome"] == "ante reached"].set_index("run") if len(ci) else ci
+    means = {r.name: r.episodes["ante"].mean() for r in sheet_runs}
+    best_run = max(means, key=means.get) if len(sheet_runs) > 1 else None
+    ranked = sorted(sheet_runs, key=lambda r: -means[r.name])  # best first
+    shown, rest = ranked[:RUN_SHEETS], ranked[RUN_SHEETS:]
+    run_sheet_grid(shown, ci, means, best_run)
+    if rest:
+        with st.expander(f"The other {len(rest)} runs, by mean ante"):
+            run_sheet_grid(rest, ci, means, best_run)
+
+
+def run_sheet_grid(sheet_runs: list[Run], ci, means: dict, best_run: str | None) -> None:
+    for start in range(0, len(sheet_runs), 3):
+        for col, r in zip(st.columns(3), sheet_runs[start : start + 3], strict=False):
+            e = r.episodes
+            with col:
+                st.html(
+                    replay.run_sheet_html(
+                        r.name,
+                        r.config,
+                        means[r.name],
+                        (ci.at[r.name, "ci_low"], ci.at[r.name, "ci_high"])
+                        if r.name in ci.index
+                        else None,
+                        e["won"].mean(),
+                        int(e["ante"].max()),
+                        len(e),
+                        sorted(e["deck"].unique()),
+                        names,
+                        icon_uri,
+                        hands.most_played_hand(r),
+                        best=r.name == best_run,
+                    )
+                )
+                order = e.sort_values(["ante", "return"], kind="stable")["episode"]
+                b1, b2 = st.columns(2)
+                b1.button(
+                    "Best episode",
+                    icon=":material/trophy:",
+                    on_click=show_episode,
+                    args=(r.name, int(order.iloc[-1])),
+                    key=f"sheet_best_{r.name}",
+                    width="stretch",
+                )
+                b2.button(
+                    "Worst episode",
+                    icon=":material/heart_broken:",
+                    on_click=show_episode,
+                    args=(r.name, int(order.iloc[0])),
+                    key=f"sheet_worst_{r.name}",
+                    width="stretch",
+                )
+
+
 # --- Overview -------------------------------------------------------------
 with tabs[0]:
     if tabs[0].open:
+        run_sheets()
         if eval_mode:
             st.info(
                 "Showing **eval episodes** (greedy, fixed seeds), eval round "
@@ -876,15 +1010,45 @@ with tabs[2]:
 
         with sub[3]:
             if sub[3].open:
-                bins = st.slider("Episode bins", 2, 50, 10, key="actions_bins")
+                # Eval episodes are numbered round by round, so one block per eval round
+                # lines the blocks up with the rounds
+                n_rounds = max(r.episodes["eval_round"].nunique() for r in runs) if eval_mode else 0
+                bins = st.slider(
+                    "Episode bins",
+                    2,
+                    50,
+                    n_rounds if n_rounds > 1 else 10,
+                    key="actions_bins_eval" if eval_mode else "actions_bins",
+                    help="Splits each run's episodes into this many equal blocks: 1000 "
+                    "episodes and 10 bins gives blocks of 100. More bins show finer changes, "
+                    "but each block has fewer decisions, so it's noisier.",
+                )
+                st.caption(
+                    "Does the shop agent's behaviour change as it trains? Each column is a "
+                    "block of episodes; the coloured bands split that block's shop decisions "
+                    "by kind and add up to 100%."
+                    + (
+                        " These are **eval episodes**: with Eval round *All* under Filter and "
+                        "one bin per eval round, each column is the greedy policy at that "
+                        "point in training (round 0 is before any training)."
+                        if eval_mode
+                        else ""
+                    )
+                )
                 over = actions.family_over_training(runs, bins)
                 if need(over, "per-step action data", no_steps):
                     chart(
                         plots.family_over_training(over, names),
                         "action families over training",
-                        "Share of each kind of decision within each block of episodes (block "
-                        "count set by the slider), one panel per run. A random agent stays "
-                        "flat; a learning one should drift.",
+                        "Share of each kind of shop decision (buy a card, pack or voucher, "
+                        "sell a joker or consumable, use a consumable, reroll, leave) in each "
+                        "block of episodes, one panel per run; the x axis is each block's first "
+                        "episode. The random, heuristic and smart shops don't learn, so their "
+                        "mix should stay roughly flat: any slow drift comes from the games "
+                        "(better play reaches later antes with more money to spend), not the "
+                        "agent. Q-learning starts fully random (epsilon 1.0, falling evenly to "
+                        "0.05 over the first 80% of training episodes), so its early blocks look "
+                        "like the random shop and the later ones show the habits it learned.",
                     )
 
         with sub[4]:
@@ -1292,7 +1456,7 @@ with tabs[5]:
         sort = c3.selectbox("Sort by", list(collection.SORTS), key="jk_sort")
         only_used = c4.toggle("Only used in runs", key="jk_used")
         shown = collection.select(cards, query, rarities, only_used, sort)
-        note = "" if game_text else " · art and effect text need the game (see Game assets)"
+        note = "" if game_text else " · art and effect text need the game (see Settings)"
         st.caption(
             f"Showing {len(shown)} of {len(cards)} jokers · stats from the selected runs"
             f" · click a joker for details{note}"
@@ -1329,13 +1493,69 @@ with tabs[6]:
                 "and which boss blinds are hardest for the agent.",
             )
 
+# --- Hands ----------------------------------------------------------------
+NO_HAND_LOG_TRAINING = (
+    "Hands are only recorded for evaluation episodes. Switch **Episodes** to "
+    "**Evaluation** in the sidebar to see them."
+)
+NO_HAND_LOG_EVAL = (
+    "These eval episodes have no hand log. Runs from balatro-shop-rl with log_version 7 "
+    "record every play and discard in eval/hands.jsonl; train again with --eval-every."
+)
+
+
+def hand_log_missing(run_list: list[Run]) -> bool:
+    """Say why there are no hands to show, if there aren't."""
+    if any(hands.has_hands(r) for r in run_list):
+        return False
+    st.info(NO_HAND_LOG_EVAL if eval_mode else NO_HAND_LOG_TRAINING, icon=":material/style:")
+    return True
+
+
+with tabs[7]:
+    if tabs[7].open and not hand_log_missing(runs):
+        if missing := [r.name for r in runs if not hands.has_hands(r)]:
+            st.caption("No hand log, not shown: " + ", ".join(missing))
+        logged = [r for r in runs if hands.has_hands(r)]
+        types = hands.hand_type_stats(logged)
+        c1, c2 = st.columns(2)
+        with c1:
+            chart(
+                plots.hand_type_share(types, names),
+                "hands played",
+                "Share of each run's plays by poker hand, best hand at the top. The play "
+                "policy picks the hand, so this shows what the decks and jokers the shop "
+                "agent built let it make.",
+            )
+        with c2:
+            chart(
+                plots.hand_type_score(types, names),
+                "hand score vs target",
+                "Mean score of a single play of each hand, as a share of the blind's target "
+                "chips. 100% beats the blind in one hand.",
+            )
+        played = hands.blind_play(logged)
+        chart(
+            plots.blind_play(played, names),
+            "hands and discards per blind",
+            "Mean hands played (solid) and discards used (dashed) per blind, by ante. More "
+            "hands per blind means the build is struggling to reach the target.",
+        )
+        deck = hands.deck_composition(logged)
+        if len(deck):
+            chart(
+                plots.deck_composition(deck, names),
+                "deck composition",
+                "Mean number of enhanced, editioned and sealed cards in the deck at the start "
+                "of each ante's blinds (from tarots, spectrals and Standard packs).",
+            )
+
 # --- Episode explorer -----------------------------------------------------
-EPISODE_FILTERS = ("ep_decks", "ep_stakes", "ep_antes", "ep_outcome", "ep_jokers")
 
 
 def open_episode(episode: int) -> None:
     """Show ``episode`` in the explorer, clearing filters that would hide it."""
-    for key in EPISODE_FILTERS:
+    for key in (*EPISODE_FILTERS, "ep_suggest"):
         st.session_state.pop(key, None)
     st.session_state.explorer_episode = episode
 
@@ -1346,30 +1566,45 @@ def open_selected_row() -> None:
         open_episode(st.session_state._ep_rows[rows[0]])
 
 
-with tabs[7]:
-    if not tabs[7].open:
+def open_suggestion() -> None:
+    label = st.session_state.get("ep_suggest")
+    if label in st.session_state.get("_suggestions", {}):
+        open_episode(st.session_state._suggestions[label])
+
+
+def step_episode(options: list[int], by: int) -> None:
+    i = options.index(st.session_state.explorer_episode) + by
+    st.session_state.explorer_episode = options[max(0, min(i, len(options) - 1))]
+
+
+def card_uri(card) -> str | None:
+    return sprites.card_uri(card) if sprites else None
+
+
+with tabs[8]:
+    if not tabs[8].open:
         for key in ("run", "episode"):  # the link belongs to the explorer
             st.query_params.pop(key, None)
-    if tabs[7].open:
-        run_name = st.selectbox("Run", run_names, key="explorer_run")
+    if tabs[8].open:
+        ex_top = st.columns([1, 3], vertical_alignment="bottom")
+        run_name = ex_top[0].selectbox("Run", run_names, key="explorer_run")
         run = by_name[run_name]
         eps = run.episodes.set_index("episode")
         if need(eps, "episodes for this selection"):
             ep_table = find.episode_table(run)
             suggestions = find.suggested_episodes(ep_table)
-            st.markdown("**Suggested episodes** · hover for why")
-            for start in range(0, len(suggestions), 4):
-                for col, sug in zip(st.columns(4), suggestions[start : start + 4], strict=False):
-                    col.button(
-                        f"{sug.label}: {sug.episode}",
-                        help=sug.reason,
-                        on_click=open_episode,
-                        args=(sug.episode,),
-                        key=f"suggest_{sug.label}",
-                        width="stretch",
-                    )
+            st.session_state._suggestions = {
+                f"{s.label}: {s.episode}": s.episode for s in suggestions
+            }
+            ex_top[1].pills(
+                "Suggested episodes",
+                list(st.session_state._suggestions),
+                key="ep_suggest",
+                on_change=open_suggestion,
+                help="\n\n".join(f"**{s.label}**: {s.reason}" for s in suggestions),
+            )
 
-            with st.expander("Filter episodes"):
+            with st.expander("Browse episodes", icon=":material/list:"):
                 f1, f2, f3 = st.columns(3)
                 deck_opts = sorted(ep_table["deck"].unique())
                 stake_opts = sorted(ep_table["stake"].unique())
@@ -1379,7 +1614,10 @@ with tabs[7]:
                 f_stakes = f2.multiselect(
                     "Stake", stake_opts, key="ep_stakes", placeholder="All", format_func=names.stake
                 )
-                outcome = f3.radio("Outcome", find.OUTCOMES, key="ep_outcome", horizontal=True)
+                outcome = f3.segmented_control(
+                    "Outcome", find.OUTCOMES, key="ep_outcome", default=find.OUTCOMES[0],
+                    required=True,
+                )  # fmt: skip
                 lo, hi = int(ep_table["ante"].min()), int(ep_table["ante"].max())
                 antes = (
                     st.slider("Ante reached", lo, hi, (lo, hi), key="ep_antes") if lo < hi else None
@@ -1392,89 +1630,183 @@ with tabs[7]:
                     placeholder="Any jokers",
                     format_func=names.item,
                 )
-            shown_eps = find.filter_episode_table(
-                ep_table, f_decks or None, f_stakes or None, antes, outcome, f_jokers
-            )
-            st.caption(
-                f"{len(shown_eps)} of {len(ep_table)} episodes · click a row to open it, "
-                "a header to sort"
-            )
-            st.session_state._ep_rows = shown_eps["episode"].tolist()
-            icon_table(
-                shown_eps,
-                ["final_jokers"],
-                {"lost_to": "blind"},
-                column_config={
-                    names.column("score_vs_target"): st.column_config.NumberColumn(
-                        format="percent",
-                        help="Lost episodes: score ÷ target on the blind that ended the run",
-                    )
-                },
-                on_select=open_selected_row,
-                selection_mode="single-row",
-                key="ep_table",
-                height=280,
-            )
+                shown_eps = find.filter_episode_table(
+                    ep_table, f_decks or None, f_stakes or None, antes, outcome, f_jokers
+                )
+                st.caption(
+                    f"{len(shown_eps)} of {len(ep_table)} episodes. Click a row to open it, "
+                    "a header to sort."
+                )
+                st.session_state._ep_rows = shown_eps["episode"].tolist()
+                icon_table(
+                    shown_eps,
+                    ["final_jokers"],
+                    {"lost_to": "blind"},
+                    column_config={
+                        names.column("score_vs_target"): st.column_config.NumberColumn(
+                            format="percent",
+                            help="Lost episodes: score ÷ target on the blind that ended the run",
+                        )
+                    },
+                    on_select=open_selected_row,
+                    selection_mode="single-row",
+                    key="ep_table",
+                    height=280,
+                )
 
             options = shown_eps["episode"].tolist()
             if not options:
-                st.caption("No episodes match the filters: choosing from all of them.")
+                st.caption("No episodes match the filters: stepping through all of them.")
                 options = eps.index.tolist()
             if st.session_state.get("explorer_episode") not in options:
                 st.session_state.explorer_episode = options[0]
-            episode = st.selectbox(
-                "Episode",
-                options,
-                key="explorer_episode",
-                format_func=lambda e: (
-                    f"{e}  ({names.deck(eps.loc[e, 'deck'])}, ante {eps.loc[e, 'ante']}, "
-                    f"{eps.loc[e, 'shop_steps']} shop steps)"
-                ),
-            )
+            episode = st.session_state.explorer_episode
             st.query_params.update(run=run_name, episode=str(episode))
             row = eps.loc[episode]
-            deck_col, stats_col = st.columns([1, 6])
-            with deck_col:
-                modal_html(details.deck_grid_html(deck_infos([row["deck"]]), names, "ex-deck"))
-                st.caption(names.stake(row["stake"]))
-            with stats_col:
-                cols = st.columns(5)
-                cols[0].metric("Ante reached", int(row["ante"]))
-                cols[1].metric("Won", "yes" if row["won"] else "no")
-                cols[2].metric("Shop decisions", int(row["shop_steps"]))
-                cols[3].metric("$ spent", int(row["dollars_spent"]))
-                cols[4].metric("Seed", str(row.get("seed", "-")))
+
+            with st.container(border=True):
+                head = st.columns([1, 7], vertical_alignment="center")
+                with head[0]:
+                    modal_html(details.deck_grid_html(deck_infos([row["deck"]]), names, "ex-deck"))
+                with head[1]:
+                    nav = st.container(horizontal=True, vertical_alignment="center")
+                    pos = options.index(episode)
+                    nav.button(
+                        "Previous",
+                        icon=":material/chevron_left:",
+                        on_click=step_episode,
+                        args=(options, -1),
+                        disabled=pos == 0,
+                        key="ep_prev",
+                    )
+                    nav.markdown(
+                        f"**Episode {episode}** ({pos + 1} of {len(options)}), "
+                        f"{names.deck(row['deck'])}, {names.stake(row['stake'])}, "
+                        f"seed {row.get('seed', '-')}"
+                    )
+                    nav.button(
+                        "Next",
+                        icon=":material/chevron_right:",
+                        on_click=step_episode,
+                        args=(options, 1),
+                        disabled=pos == len(options) - 1,
+                        key="ep_next",
+                    )
+                    cols = st.columns(4)
+                    cols[0].metric("Ante reached", int(row["ante"]))
+                    cols[1].metric("Won", "Yes" if row["won"] else "No")
+                    cols[2].metric("Shop decisions", int(row["shop_steps"]))
+                    cols[3].metric("Money spent", f"${int(row['dollars_spent'])}")
 
             final = [j for j in str(row.get("final_jokers", "")).split(";") if j]
-            st.subheader("Final jokers")
             if final:
+                st.subheader("Final jokers")
                 joker_grid([(j, "") for j in final], "ex-jk")
-            else:
-                st.caption("None")
 
-            timeline = metrics.episode_timeline(run, episode)
-            if need(timeline, "shop decisions in this episode", run.steps is None):
-                chart(
-                    plots.episode_money(timeline, names),
-                    f"episode {episode} money {run_name}",
-                    "Money after each shop decision in this episode, in order. Hover a point "
-                    "for the action and item; jumps between shop visits are the round's "
-                    "cash-out.",
-                )
-                order = ["step", "ante", "round", "dollars_before", "action_name", "item_key"]
-                order += [c for c in timeline.columns if c not in order]
-                item_table(
-                    timeline[order], ["item_key", "jokers_before", "consumables_before"], "ex-shop"
-                )
-            st.subheader("Blinds played")
-            rounds = metrics.episode_rounds(run, episode)
-            if need(rounds, "rounds in this episode", run.rounds is None):
-                if "jokers" in rounds:
-                    st.caption(
-                        "Jokers and consumables are what was held entering each blind (after "
-                        "the shop before it); the first blind comes before any shop."
+            ex_tabs = st.tabs(
+                ["Replay", "Shop", "Money & blinds"], key="explorer_view", on_change="rerun"
+            )
+            with ex_tabs[0]:
+                if ex_tabs[0].open and not hand_log_missing([run]):
+                    acts = hands.episode_hands(run, episode)
+                    blinds_played = acts.drop_duplicates("round")[["round", "ante", "blind_key"]]
+                    labels = {
+                        int(b.round): f"{b.ante}: {names.blind(b.blind_key)}"
+                        for b in blinds_played.itertuples()
+                    }
+                    if st.session_state.get("ex_blind") not in labels:
+                        st.session_state.ex_blind = next(iter(labels))
+                    blind_round = st.segmented_control(
+                        "Blind (ante: blind)",
+                        list(labels),
+                        key="ex_blind",
+                        format_func=labels.get,
+                        required=True,
                     )
-                item_table(rounds, ["jokers", "consumables"], "ex-blind")
+                    rounds_ = metrics.episode_rounds(run, episode)
+                    beaten = None
+                    if "beaten" in rounds_:
+                        match = rounds_[rounds_["round"] == blind_round]["beaten"]
+                        beaten = bool(match.iloc[0]) if len(match) else None
+                    held, logged = hands.blind_jokers(run, episode, blind_round)
+                    st.markdown("**Jokers held**")
+                    if held:
+                        joker_grid([(j, "") for j in held], "ex-held")
+                    st.caption(
+                        ("None. " if not held else "")
+                        + (
+                            "As held at the first play or discard of this blind; changes "
+                            "during the blind are noted on the action. Click a joker for "
+                            "its effect."
+                            if logged
+                            else "What was held leaving the shop before this blind (this run "
+                            "didn't log jokers per play, so changes during the blind, "
+                            "like Riff-raff or Ice Cream, aren't shown)."
+                        )
+                    )
+                    st.html(
+                        replay.blind_html(
+                            acts[acts["round"] == blind_round], names, card_uri, icon_uri, beaten
+                        )
+                    )
+                    decks_ = hands.episode_decks(run, episode)
+                    if blind_round in decks_.index:
+                        d = decks_.loc[blind_round]
+                        with st.expander(
+                            f"Deck at the start of this blind ({len(d['cards'])} cards)",
+                            icon=":material/playing_cards:",
+                        ):
+                            st.html(replay.deck_html(d["cards"], card_uri))
+                            levels = d.get("hand_levels")
+                            if isinstance(levels, dict) and levels:
+                                st.caption(
+                                    "Hand levels: "
+                                    + ", ".join(f"{h} {lv}" for h, lv in levels.items())
+                                )
+            with ex_tabs[1]:
+                if ex_tabs[1].open:
+                    one = metrics.filter_episodes(run, episode, episode)
+                    if need_new(one.shops, "shop offers in this episode"):
+                        st.caption(
+                            "Each shop as it was offered, on entering and after every reroll. "
+                            "Raised items with an orange price were bought; other decisions "
+                            "are listed under the offer they were taken on."
+                        )
+                        st.html(
+                            replay.shop_html(
+                                economy.offers(one), one.shops, one.steps, names, icon_uri
+                            )
+                        )
+            with ex_tabs[2]:
+                if ex_tabs[2].open:
+                    timeline = metrics.episode_timeline(run, episode)
+                    if need(timeline, "shop decisions in this episode", run.steps is None):
+                        chart(
+                            plots.episode_money(timeline, names),
+                            f"episode {episode} money {run_name}",
+                            "Money after each shop decision in this episode, in order. Hover a "
+                            "point for the action and item; jumps between shop visits are the "
+                            "round's cash-out.",
+                        )
+                        order = [
+                            "step", "ante", "round", "dollars_before", "action_name", "item_key"
+                        ]  # fmt: skip
+                        order += [c for c in timeline.columns if c not in order]
+                        item_table(
+                            timeline[order],
+                            ["item_key", "jokers_before", "consumables_before"],
+                            "ex-shop",
+                        )
+                    st.subheader("Blinds played")
+                    rounds = metrics.episode_rounds(run, episode)
+                    if need(rounds, "rounds in this episode", run.rounds is None):
+                        if "jokers" in rounds:
+                            st.caption(
+                                "Jokers and consumables are what was held entering each blind "
+                                "(after the shop before it); the first blind comes before any "
+                                "shop."
+                            )
+                        item_table(rounds, ["jokers", "consumables"], "ex-blind")
 
 # --- Export (sidebar, after every chart is registered) --------------------
 with export_area, st.expander("Export"):

@@ -18,6 +18,12 @@ from balatro_analysis import catalog
 
 COLUMNS = {
     "run": "Run",
+    "hand_type": "Hand",
+    "plays": "Plays",
+    "mean_score": "Mean score",
+    "mean_score_vs_target": "Score ÷ target",
+    "hands_played": "Hands played",
+    "discards_used": "Discards used",
     "episode": "Episode",
     "episodes": "Episodes",
     "eval_round": "Eval round",

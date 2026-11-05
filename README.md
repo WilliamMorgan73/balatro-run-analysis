@@ -13,10 +13,17 @@ uv run streamlit run app.py                                   # reads ../balatro
 uv run streamlit run app.py -- --runs-dir /path/to/runs       # or anywhere else
 ```
 
-Choose the runs folder in the sidebar with **Browse…** (opens your desktop's folder
-dialog: kdialog, zenity, or Tk as a fallback) or type a path. Pick any number of runs
-to overlay, filter by deck and stake, and use **Reload runs** after a training run
-finishes.
+The sidebar holds only what you are looking at: **Runs** (pick any number to overlay; *Find
+runs* searches and filters them), **Reload runs** after a training run finishes, the
+*Training* / *Evaluation* switch, and **Filter** (deck, stake, episodes or eval round, rolling
+window), with a one-line summary of the filter above it. **Settings** holds the things set
+once: in-game names, the runs folder and the Balatro install (**Browse…** opens your
+desktop's folder dialog: kdialog, zenity, or Tk as a fallback).
+
+The Overview opens with a **run sheet** per run, styled like the game's run-over screen:
+mean ante with its CI, win rate, best ante, most played hand (eval hand logs), and buttons
+that open the run's best and worst episode in the Episode explorer. The six best runs are
+shown; the rest fold into an expander.
 
 Loaded runs are cached in `~/.cache/balatro-analysis` (or `$XDG_CACHE_HOME`), roughly
 10–30 MB per run, so later starts skip parsing the logs; a run is parsed again when its
@@ -49,7 +56,7 @@ it ran on.
 
 ## Names: presenting vs analysing
 
-The **In-game names** toggle (top of the sidebar) switches every label between the
+The **In-game names** toggle (sidebar → Settings) switches every label between the
 names shown in the game ("Greedy Joker", "Black Deck", "The Hook", "Buy card 1", "$ before")
 and the exact keys (`j_greedy_joker`, `b_black`, `bl_hook`, `buy_card_0`, `dollars_before`).
 Open `http://localhost:8501/?names=keys` to start in key mode.
@@ -74,12 +81,17 @@ Sidebar → **Export**, always for the current run/episode/deck/stake selection:
 Chart rendering uses kaleido with your local Chrome/Chromium. If none is found the chart
 buttons say so; `uv run kaleido_get_chrome` downloads one.
 
-## Joker and deck icons, joker text
+## Game art, font and text
 
-Icons and joker effect text are read at runtime from **your own copy of Balatro**; no game
-art or text is stored in this repo. The game is found automatically in Steam libraries (Linux, Flatpak, macOS,
-Windows), or set `BALATRO_PATH` / the *Game assets* sidebar field to the install folder
-or `Balatro.exe`. Without the game the dashboard shows names only.
+Icons, playing cards (with enhancements and seals), the pixel font (`m6x11plus`) and joker
+effect text are read at runtime from **your own copy of Balatro**; no game art, font or text
+is stored in this repo. The game is found automatically in Steam libraries (Linux, Flatpak, macOS,
+Windows), or set `BALATRO_PATH` / the *Balatro install* field under Settings to the install
+folder or `Balatro.exe`. Without the game the dashboard shows names and text cards, in the
+theme's sans font.
+
+The colours (`.streamlit/config.toml`) are the game's own: the dark slate table, chips blue,
+mult red, money gold. `theme.py` adds the font and the chunky "lip" under buttons and panels.
 
 Effect text comes from the game's `localization/en-us.lua`; its `#1#`-style values are filled
 from the game's own `card.lua` expressions, evaluated against each joker's starting stats with
@@ -117,8 +129,12 @@ greedy episodes on the fixed seeds `EVAL_0..K-1`, played before training and aft
 training episodes, with `eval_round` and `train_episodes` columns. Every run with the same eval
 settings plays the same eval games. `eval/` is loaded with its run (it isn't listed as a run of
 its own). The sidebar **Episodes** switch (*Training* / *Evaluation*) swaps every tab over to the
-eval episodes, and an **Eval round** picker defaults to the last round, which scores the final
-policy. Paired comparisons then match the runs game by game.
+eval episodes, and an **Eval round** picker (under Filter) defaults to the last round, which
+scores the final policy. Paired comparisons then match the runs game by game.
+
+From `log_version` 7, eval episodes also log every play and discard (`eval/hands.jsonl`) and the
+deck at each blind (`eval/decks.jsonl`), for the Hands tab and the explorer's Replay. Training
+episodes don't: there are far more of them and the log is several times the size of the rest.
 
 ## Tabs
 
@@ -171,7 +187,17 @@ policy. Paired comparisons then match the runs game by game.
   stats from the selected runs (times bought, first ante, held at end, mean ante); search,
   rarity filter, sort, "only used in runs"
 - **Rounds**: score / target by ante and blind type; blinds that ended runs
-- **Episode explorer**: one episode's deck, final jokers, shop decisions, money curve and blinds
+- **Hands** (Evaluation, `log_version` 7): share of plays by poker hand, one play's score ÷
+  the blind's target by hand, hands and discards used per blind by ante, enhanced /
+  editioned / sealed cards in the deck by ante
+- **Episode explorer**: suggested episodes as one-click pills, *Browse episodes* (filters and
+  a clickable table), **Previous** / **Next**, and the episode's deck, stats and final jokers, then:
+  - *Replay* (Evaluation, `log_version` 7): pick a blind and see every discard and play as
+    in the game: the hand as card faces (played cards raised, discarded ones dropped), the
+    hand type and chips × mult = score, the blind's progress, and the deck at its start
+  - *Shop*: every shop visit drawn as the shop, each offer (entering and after each reroll)
+    with prices, bought items raised, and the other decisions taken on it
+  - *Money & blinds*: the money curve, shop decisions and blinds played
 
 ## Layout
 
@@ -189,8 +215,13 @@ src/balatro_analysis/sprites.py icons from the local game install
 src/balatro_analysis/game_text.py joker effect text from the local game install
 src/balatro_analysis/collection.py the Joker collection cards
 src/balatro_analysis/picker.py  native folder dialog
+src/balatro_analysis/cards.py   playing cards from the eval hand log
+src/balatro_analysis/hands.py   play metrics from the eval hand log
+src/balatro_analysis/replay.py  game-styled HTML: replay, deck, shop visits, run sheets
+src/balatro_analysis/theme.py   the game font and panel styling on top of config.toml
 scripts/sync_centers.py         regenerate the name/sprite catalog from jackdaw
-docs/run-format.md              the run folder format (log_version 6)
+docs/run-format.md              the run folder format (log_version 7)
+.streamlit/config.toml          the theme (Balatro's colours)
 tests/                          pytest + Streamlit AppTest on a small fixture run
 ```
 
