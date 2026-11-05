@@ -17,7 +17,7 @@ from collections.abc import Callable
 import pandas as pd
 
 from balatro_analysis import catalog
-from balatro_analysis.cards import RANKS, SUIT_SYMBOLS, PlayingCard
+from balatro_analysis.cards import RANKS, SUIT_SYMBOLS, PlayingCard, joker_state, state_label
 from balatro_analysis.names import Names
 from balatro_analysis.theme import CHIPS, INSET, LIP, MONEY, MULT, PANEL, PLAY, TABLE, WIN
 
@@ -181,6 +181,37 @@ def _level_badge(act) -> str:
     )
 
 
+def _joker_changes(before: list[tuple], now: list[tuple], names: Names) -> str:
+    """What changed in the jokers held since the last action: gained, lost,
+    reordered, and scaling jokers' values (Green Joker +3 Mult -> +4 Mult;
+    log_version 15).  ``before`` / ``now``: (key, state) per slot."""
+    keys_before, keys_now = [k for k, _ in before], [k for k, _ in now]
+    gained = [names.item(k) for k in keys_now if k not in keys_before]
+    lost = [names.item(k) for k in keys_before if k not in keys_now]
+    parts = [
+        f"{verb} <b>{_esc(', '.join(js))}</b>"
+        for verb, js in (("gained", gained), ("lost", lost))
+        if js
+    ]
+    if not parts and keys_now != keys_before:
+        parts.append("reordered")
+    unused = list(before)
+    for key, state in now:  # pair each joker with the first unused one of its key
+        match = next((i for i, (k, _) in enumerate(unused) if k == key), None)
+        if match is None:
+            continue
+        old = unused.pop(match)[1]
+        old, state = joker_state(old), joker_state(state)
+        if old and state and old != state:
+            parts.append(
+                f"<b>{_esc(names.item(key))}</b> {_esc(state_label(key, old))} → "
+                f"{_esc(state_label(key, state))}"
+            )
+    if not parts:
+        return ""
+    return f'<div class="rp-jchange">Jokers since the last action: {"; ".join(parts)}</div>'
+
+
 def blind_html(
     acts: pd.DataFrame,
     names: Names,
@@ -235,20 +266,13 @@ def blind_html(
             f"card{'s' if len(picked) != 1 else ''}</span></div>"
         )
         jokers = getattr(a, "jokers_held", None)
+        states = getattr(a, "joker_states", None)
         if isinstance(jokers, list):
-            if previous_jokers is not None and jokers != previous_jokers:
-                gained = [names.item(j) for j in jokers if j not in previous_jokers]
-                lost = [names.item(j) for j in previous_jokers if j not in jokers]
-                parts = [
-                    f"{verb} <b>{_esc(', '.join(js))}</b>"
-                    for verb, js in (("gained", gained), ("lost", lost))
-                    if js
-                ]
-                head += (
-                    '<div class="rp-jchange">Jokers since the last action: '
-                    f"{'; '.join(parts) or 'reordered'}</div>"
-                )
-            previous_jokers = jokers
+            states = states if isinstance(states, list) else [None] * len(jokers)
+            held = list(zip(jokers, states, strict=False))
+            if previous_jokers is not None:
+                head += _joker_changes(previous_jokers, held, names)
+            previous_jokers = held
         score = ""
         if kind == "play":
             debuffed = " (debuffed by the boss)" if a.debuffed else ""

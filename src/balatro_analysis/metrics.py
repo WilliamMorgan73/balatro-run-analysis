@@ -495,13 +495,15 @@ def episode_timeline(run: Run, episode: int) -> pd.DataFrame:
         "dollars_after",
         "reward",
         "jokers_before",
+        "joker_state",
         "consumables_before",
     ]
     return s[[c for c in cols if c in s]]
 
 
 def episode_rounds(run: Run, episode: int) -> pd.DataFrame:
-    """The episode's blinds, with the jokers and consumables held entering each one.
+    """The episode's blinds, with the jokers and consumables held entering each one
+    (and, log_version 15, ``joker_state``: each joker's values if it scales).
 
     Those come from the shop visit before the blind: its last decision is leaving
     the shop, which changes nothing, so its ``*_before`` lists are what was held
@@ -515,14 +517,17 @@ def episode_rounds(run: Run, episode: int) -> pd.DataFrame:
         return rounds
     s = run.steps[run.steps["episode"] == episode].sort_values("step")
     last = s.groupby("round").tail(1).set_index("round")  # leaving each shop
-    for col, src in (("jokers", "jokers_before"), ("consumables", "consumables_before")):
+    sources = [("jokers", "jokers_before"), ("consumables", "consumables_before")]
+    if "joker_state" in s and "jokers" not in rounds:  # log_version 15, per jokers slot
+        sources.append(("joker_state", "joker_state"))
+    for col, src in sources:
         if col in rounds:  # logged directly by a newer harness
             continue
         rounds[col] = [
             last.at[r - 1, src] if r - 1 in last.index else None for r in rounds["round"]
         ]
     if "beaten" in rounds:  # held items next to the outcome, before the cash-out columns
-        held = [c for c in ("jokers", "consumables") if c in rounds]
+        held = [c for c in ("jokers", "joker_state", "consumables") if c in rounds]
         rest = [c for c in rounds if c not in held]
         at = rest.index("beaten") + 1
         rounds = rounds[rest[:at] + held + rest[at:]]

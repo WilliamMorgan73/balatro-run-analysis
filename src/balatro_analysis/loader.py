@@ -116,9 +116,7 @@ def _read_jsonl(path: Path) -> pd.DataFrame | None:
     if not data.strip():
         return None
     try:
-        table = pj.read_json(
-            pa.BufferReader(data), parse_options=pj.ParseOptions(newlines_in_values=False)
-        )
+        table = _arrow_table(data)
     except (pa.ArrowInvalid, pa.ArrowNotImplementedError):
         table = None
     if table is not None and not any(pa.types.is_struct(t) for t in table.schema.types):
@@ -130,6 +128,37 @@ def _read_jsonl(path: Path) -> pd.DataFrame | None:
         if col in df:
             df[mask] = mask_from_lists(df.pop(col))
     return df
+
+
+def _arrow_table(data: bytes) -> pa.Table:
+    """``data`` as an Arrow table; ArrowInvalid if Arrow can't read it right.
+
+    pyarrow (26) can build a list-of-objects column with broken offsets when some
+    items are null, as in ``steps.jsonl`` ``joker_state`` (log_version 15); reading
+    again with the inferred schema given explicitly reads it right.  Only nested
+    columns are checked, so other logs pay nothing extra."""
+
+    def read(schema: pa.Schema | None = None) -> pa.Table:
+        options = pj.ParseOptions(newlines_in_values=False, explicit_schema=schema)
+        return pj.read_json(pa.BufferReader(data), parse_options=options)
+
+    table = read()
+    if _nested_valid(table):
+        return table
+    table = read(table.schema)
+    if _nested_valid(table):
+        return table
+    raise pa.ArrowInvalid("pyarrow built an invalid nested column")
+
+
+def _nested_valid(table: pa.Table) -> bool:
+    for name, typ in zip(table.schema.names, table.schema.types, strict=True):
+        if pa.types.is_nested(typ):
+            try:
+                table.column(name).validate(full=True)
+            except pa.ArrowInvalid:
+                return False
+    return True
 
 
 def _from_arrow(table: pa.Table) -> pd.DataFrame:
@@ -291,9 +320,7 @@ def _load_tables(
     if steps is not None:
         for col in ("jokers_before", "consumables_before"):
             if col in steps:  # pandas fallback: nulls (and NaN) as []
-                steps[col] = _shared_lists(
-                    [v if isinstance(v, list) else None for v in steps[col]]
-                )
+                steps[col] = _shared_lists([v if isinstance(v, list) else None for v in steps[col]])
 
     return Run(
         name=name,

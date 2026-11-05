@@ -137,6 +137,11 @@ From `log_version` 7, eval episodes also log every play and discard (`eval/hands
 deck at each blind (`eval/decks.jsonl`), for the Hands tab and the explorer's Replay. Training
 episodes don't: there are far more of them and the log is several times the size of the rest.
 
+From `log_version` 15, scaling jokers (Spare Trousers, Ice Cream, Ramen, ...) log their current
+values in `eval/hands.jsonl` and in `steps.jsonl` (`joker_state`): the Replay shows each one's
+value under its card ("+6 Mult") and notes when it changes ("+0 Chips → +4 Chips"), and the
+explorer's tables add a *Scaling jokers* column.
+
 ## Tabs
 
 - **Overview**: summary per run; 95% CIs of mean ante, win rate (Wilson) and return; with
@@ -207,7 +212,8 @@ episodes don't: there are far more of them and the log is several times the size
   a clickable table), **Previous** / **Next**, and the episode's deck, stats and final jokers, then:
   - *Replay* (Evaluation, `log_version` 7): pick a blind and see every discard and play as
     in the game: the hand as card faces (played cards raised, discarded ones dropped), the
-    hand type and chips × mult = score, the blind's progress, and the deck at its start
+    hand type and chips × mult = score, the blind's progress, and the deck at its start;
+    from `log_version` 15, scaling jokers' values under their cards and as they change
   - *Shop*: every shop visit drawn as the shop, each offer (entering and after each reroll)
     with prices, bought items raised, and the other decisions taken on it
   - *Money & blinds*: the money curve, shop decisions and blinds played
@@ -233,7 +239,7 @@ src/balatro_analysis/hands.py   play metrics from the eval hand log
 src/balatro_analysis/replay.py  game-styled HTML: replay, deck, shop visits, run sheets
 src/balatro_analysis/theme.py   the game font and panel styling on top of config.toml
 scripts/sync_centers.py         regenerate the name/sprite catalog from jackdaw
-docs/run-format.md              the run folder format (log_version 7)
+docs/run-format.md              the run folder format (log_version 15)
 .streamlit/config.toml          the theme (Balatro's colours)
 tests/                          pytest + Streamlit AppTest on a small fixture run
 ```

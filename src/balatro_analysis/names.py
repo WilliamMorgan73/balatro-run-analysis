@@ -55,6 +55,8 @@ COLUMNS = {
     "reward": "Reward",
     "done": "Done",
     "jokers_before": "Jokers held",
+    "joker_values": "Scaling jokers",
+    "joker_state": "Scaling jokers (raw)",
     "consumables_before": "Consumables held",
     "blind_key": "Blind",
     "target": "Target",

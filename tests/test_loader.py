@@ -129,3 +129,33 @@ def test_arrow_and_pandas_readers_agree(copied_runs, monkeypatch):
             x = [list(v) if hasattr(v, "__len__") and not isinstance(v, str) else v for v in a[col]]
             y = [list(v) if hasattr(v, "__len__") and not isinstance(v, str) else v for v in b[col]]
             assert pd.Series(x, dtype=object).equals(pd.Series(y, dtype=object)), (table, col)
+
+
+def test_joker_state_with_only_null_slots_loads(tmp_path):
+    """log_version 15 steps.jsonl joker_state: a row holding no scaling joker is a
+    list of nulls, which pyarrow (26) reads into a broken column unless the
+    schema is given; the loader must read it right, and quickly (no pandas)."""
+    import json
+
+    run = tmp_path / "v15"
+    run.mkdir()
+    (run / "episodes.csv").write_text("episode,ante,won,return\n0,2,0,1.0\n")
+    held = [
+        (["j_jolly", "j_wily"], [None, None]),  # nothing scaling: only nulls
+        (["j_trousers", "j_jolly"], [{"mult": 6}, None]),
+        (["j_ramen"], [{"x_mult": 1.91}]),
+        ([], []),
+    ]
+    rows = [
+        {"episode": 0, "step": i, "jokers_before": keys, "joker_state": state}
+        for i, (keys, state) in enumerate(held)
+    ]
+    (run / "steps.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    steps = load_run(run).steps
+    got = [
+        [None if d is None else {k: v for k, v in d.items() if v is not None} for d in row]
+        for row in steps["joker_state"]
+    ]
+    assert got == [r["joker_state"] for r in rows]
+    assert steps["jokers_before"].tolist() == [r["jokers_before"] for r in rows]
+    assert type(steps["joker_state"].array).__name__ == "ArrowExtensionArray"  # not pandas
