@@ -587,3 +587,40 @@ def test_overview_with_a_run_behind_on_eval_rounds(eval_runs_dir):
         assert not at.exception, (tab, at.exception)
     at = _eval_app(eval_runs_dir, "Overview")
     assert any("not shown: run_b" in c.value for c in at.caption)
+
+
+def _subheaders(at: AppTest) -> list[str]:
+    return [s.value for s in at.subheader]
+
+
+def test_overview_iqm_and_power_for_runs(eval_runs_dir):
+    at = _eval_app(eval_runs_dir, "Overview")
+    assert not at.exception
+    assert any("Interquartile mean (IQM)" in c.value for c in at.caption)
+    assert "Can these runs tell agents apart?" in _subheaders(at)
+    labels = [m.label for m in at.metric]
+    assert "Detectable now" in labels and any(lbl.startswith("Games needed") for lbl in labels)
+    assert any("Paired on games" in c.value for c in at.caption)
+    # run_b is exactly one ante better on every shared seed: any difference shows
+    assert next(m for m in at.metric if m.label == "Detectable now").value == "0.00 ante"
+    assert not [w for w in at.warning if "reliably detect" in w.value]
+    assert any("Probability of improvement" in c.value for c in at.caption)
+    assert any("Performance profile (Agarwal" in c.value for c in at.caption)
+
+
+def test_overview_iqm_and_power_for_groups(group_runs_dir):
+    at = _run(group_runs_dir)
+    at.radio(key="compare_by").set_value("Groups").run()
+    assert not at.exception
+    assert any("Interquartile mean (IQM)" in c.value for c in at.caption)
+    labels = [m.label for m in at.metric]
+    assert "Detectable now" in labels and "With unlimited games" in labels
+    assert any(lbl.startswith("Seeds needed") for lbl in labels)
+    # seeds a whole ante apart: 2-3 seeds can't detect a quarter of an ante
+    assert any("these groups can reliably detect" in w.value for w in at.warning)
+    at.number_input(key="power_target").set_value(50.0).run()
+    assert not at.exception
+    assert not [w for w in at.warning if "reliably detect" in w.value]
+    assert any("Probability of improvement" in c.value for c in at.caption)
+    profile = next(c.value for c in at.caption if c.value.startswith("Performance profile"))
+    assert "one line per group" in profile

@@ -57,6 +57,20 @@ def memo(run: Run, key: str, build: Callable[[], pd.DataFrame]) -> pd.DataFrame:
 
 
 EVAL_DIR = "eval"
+# what a run (and its eval/ folder) is read from, in the order it is read
+LOG_FILES = (
+    "episodes.csv",
+    "config.json",
+    "steps.jsonl",
+    "rounds.jsonl",
+    "shops.jsonl",
+    "hands.jsonl",
+    "decks.jsonl",
+)
+
+# ``progress(label, fraction)``: called before each file of a run is read, with
+# the fraction of the run's log bytes already read
+Progress = Callable[[str, float], None]
 
 
 def is_eval_dir(path: Path) -> bool:
@@ -183,9 +197,47 @@ def mask_actions(mask: int) -> list[int]:
     return [a for a in range(mask.bit_length()) if mask >> a & 1]
 
 
-def load_run(path: str | Path, root: str | Path | None = None) -> Run:
-    """Load one run directory. ``root`` (if given) makes the name relative to it."""
+def log_files(path: str | Path) -> list[Path]:
+    """The log files a run at ``path`` is read from (its own and its eval/ folder's)."""
     path = Path(path)
+    return [d / n for d in (path, path / EVAL_DIR) for n in LOG_FILES if (d / n).is_file()]
+
+
+def log_bytes(path: str | Path) -> int:
+    """Total size of ``log_files(path)``: how much loading the run reads."""
+    total = 0
+    for f in log_files(path):
+        try:
+            total += f.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def _reporter(path: Path, progress: Progress | None) -> Callable[[Path], None]:
+    """``report(file)`` before reading each file: passes ``progress`` the file and
+    the fraction of the run's bytes read before it."""
+    total = log_bytes(path) or 1
+    done = 0
+
+    def report(file: Path) -> None:
+        nonlocal done
+        if progress is None or not file.is_file():
+            return
+        label = str(file.relative_to(path)) if file.is_relative_to(path) else file.name
+        progress(label, min(done / total, 1.0))
+        done += file.stat().st_size
+
+    return report
+
+
+def load_run(
+    path: str | Path, root: str | Path | None = None, progress: Progress | None = None
+) -> Run:
+    """Load one run directory. ``root`` (if given) makes the name relative to it.
+    ``progress`` (if given) hears about each file as it is read."""
+    path = Path(path)
+    report = _reporter(path, progress)
     name = str(path.relative_to(root)) if root else path.name
     if name == ".":
         name = path.name
@@ -193,15 +245,18 @@ def load_run(path: str | Path, root: str | Path | None = None) -> Run:
     if not config_path.is_file() and is_eval_dir(path):
         config_path = path.parent / "config.json"  # loaded on its own: use the run's config
     config = json.loads(config_path.read_text()) if config_path.is_file() else {}
-    run = _load_tables(path, name, config)
+    run = _load_tables(path, name, config, report)
     if (path / EVAL_DIR / "episodes.csv").is_file():
-        run.eval = _load_tables(path / EVAL_DIR, name, config)
+        run.eval = _load_tables(path / EVAL_DIR, name, config, report)
         if run.eval.episodes.empty:  # first eval round still being played
             run.eval = None
     return run
 
 
-def _load_tables(path: Path, name: str, config: dict) -> Run:
+def _load_tables(
+    path: Path, name: str, config: dict, report: Callable[[Path], None] = lambda f: None
+) -> Run:
+    report(path / "episodes.csv")
     episodes = pd.read_csv(io.StringIO(_complete_lines(path / "episodes.csv")))
     if "final_jokers" in episodes:
         episodes["final_jokers"] = episodes["final_jokers"].fillna("").astype(str)
@@ -221,11 +276,11 @@ def _load_tables(path: Path, name: str, config: dict) -> Run:
         episodes["final_ante"] = episodes["ante"]
         episodes["ante"] = episodes["max_ante"]
 
-    steps = _read_jsonl(path / "steps.jsonl")
-    rounds = _read_jsonl(path / "rounds.jsonl")
-    shops = _read_jsonl(path / "shops.jsonl")
-    hands = _read_jsonl(path / "hands.jsonl")
-    decks = _read_jsonl(path / "decks.jsonl")
+    tables = {}
+    for table in ("steps", "rounds", "shops", "hands", "decks"):
+        report(path / f"{table}.jsonl")
+        tables[table] = _read_jsonl(path / f"{table}.jsonl")
+    steps, rounds, shops, hands, decks = tables.values()
     # v1 configs have no log_version; a run with no config at all is taken as current
     v1 = bool(config) and config.get("log_version", 1) < 2
     if rounds is not None and v1 and "blind_key" in rounds:

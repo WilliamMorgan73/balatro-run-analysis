@@ -69,8 +69,9 @@ Sidebar → **Export**, always for the current run/episode/deck/stake selection:
   for every table and chart. Each key column has a `<column>_name` twin, so the files work for
   both analysis and slides, whatever the toggle says. A `README.txt` records the selection.
   `run_comparison.csv` uses the first selected run as the baseline.
-  `latex/*.tex` holds the main result tables (summary, CIs, run comparison, and the group
-  summary/comparison when runs share a `--group`) as booktabs floats with in-game names and
+  `latex/*.tex` holds the main result tables (summary, CIs, run comparison, IQM, probability
+  of improvement and power, and the group versions when runs share a `--group`; the power
+  tables use the difference set in Overview, 0.25 ante by default) as booktabs floats with in-game names and
   `mean [95% CI]` cells, ready for `\input`. They need `\usepackage{booktabs,graphicx}`;
   wide tables are scaled to `\linewidth`. Captions and `tab:<name>` labels are included.
 - **All charts (ZIP)**: every chart currently shown, as PNG (3200x1800) and/or SVG, in a
@@ -148,6 +149,18 @@ episodes don't: there are far more of them and the log is several times the size
   **Compare: Runs / Groups** switch averages each group's runs: summary with a Student-t CI
   across seeds, Welch's t-test against a baseline group, and group learning / eval curves with
   bands across seeds. Use groups for claims about a method, since a single training run can be lucky.
+  Both views also give the **interquartile mean** (IQM, Agarwal et al. 2021) of ante and return
+  with a stratified bootstrap 95% CI: for a group whose runs played the same eval games, training
+  seeds are redrawn within each game (rliable's runs × tasks bootstrap), otherwise episodes within
+  each run. **Can these runs tell agents apart?** is a power readout (two-sided, α = 0.05, 80%
+  power): the smallest difference in mean ante the selection can detect, and the games (runs) or
+  seeds per group (groups, from the game-to-game and seed-to-seed variance) needed to detect a
+  difference you choose, with a warning when the current eval set is too small. With two or
+  more runs (groups), a **probability of improvement** table gives, for each against the
+  baseline, the chance one of its games reaches a higher ante than one of the baseline's (ties
+  half), with a 95% CI: paired game by game when runs share games, rliable's per-game version
+  for groups. A **performance profile** chart shows the share of games reaching each ante,
+  with bootstrap bands, so you can see where each agent's runs break down.
 - **Decks**: deck cards with episodes and mean ante; mean ante by deck and stake per run
 - **Actions**: KPI strip (decisions per visit, visits leaving at once, visits with a buy, most
   common first action) and sub-tabs:
@@ -206,7 +219,7 @@ app.py                          Streamlit UI only
 src/balatro_analysis/loader.py  find_runs / load_run -> Run
 src/balatro_analysis/metrics.py pure pandas metrics (testable without Streamlit)
 src/balatro_analysis/economy.py economy metrics (shop visits, spending, interest, offers)
-src/balatro_analysis/stats.py   confidence intervals, run-vs-baseline tests, p/q-values
+src/balatro_analysis/stats.py   confidence intervals, IQM, power, run-vs-baseline tests, p/q-values
 src/balatro_analysis/plots.py   Plotly figure builders
 src/balatro_analysis/catalog.py display names for game keys (centers, blinds)
 src/balatro_analysis/names.py   in-game names vs exact keys (the sidebar toggle)

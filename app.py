@@ -6,9 +6,11 @@ uv run streamlit run app.py -- --runs-dir ../balatro-shop-rl/runs
 from __future__ import annotations
 
 import argparse
+import collections
 import functools
 import importlib
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -75,7 +77,7 @@ from balatro_analysis import (  # noqa: E402
     theme,
 )
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
-from balatro_analysis.loader import Run, find_runs  # noqa: E402
+from balatro_analysis.loader import Run, find_runs, log_bytes  # noqa: E402
 from balatro_analysis.names import Names, split_items  # noqa: E402
 from balatro_analysis.picker import PickerUnavailable, pick_directory  # noqa: E402
 from balatro_analysis.sprites import Sprites, find_balatro, game_archive  # noqa: E402
@@ -94,13 +96,52 @@ def cli_runs_dir() -> Path:
     return args.runs_dir
 
 
-# cache_resource hands back the cached Run itself: cache_data would unpickle every
-# run (hundreds of MB) on each rerun.  Nothing writes to it; tabs filter copies.
-@st.cache_resource(show_spinner="Loading run…", max_entries=24)
-def cached_run(path: str, root: str, mtime: float, pkg_mtime: float) -> Run:
+RUNS_KEPT = 24  # runs held in memory across reruns and sessions
+
+
+# The cached Runs themselves (not copies): cache_data would unpickle every run
+# (hundreds of MB) on each rerun.  Nothing writes to them; tabs filter copies.  A
+# plain dict rather than caching ``cached_run``, which may draw the progress bar.
+@st.cache_resource
+def run_store() -> collections.OrderedDict[tuple, Run]:
+    return collections.OrderedDict()
+
+
+@st.cache_resource
+def run_locks() -> tuple[threading.Lock, dict[tuple, threading.Lock]]:
+    """A lock per run key, so sessions loading the same run at once read it once
+    (the second waits for the first); different runs still load in parallel.
+    The first lock guards the store and the dict of locks."""
+    return threading.Lock(), {}
+
+
+def cached_run(path: str, root: str, mtime: float, pkg_mtime: float, progress=None) -> Run:
     # mtime: re-written runs reload; pkg_mtime: never reuse Runs from old code.
     # Runs unchanged since a previous session come from the disk cache.
-    return runcache.load_run_cached(path, root, runcache.cache_dir())
+    store, key = run_store(), (path, root, mtime, pkg_mtime)
+    guard, locks = run_locks()
+    with guard:
+        if key in store:
+            store.move_to_end(key)
+            return store[key]
+        lock = locks.setdefault(key, threading.Lock())
+    with lock:
+        with guard:  # loaded by another session while this one waited
+            if key in store:
+                store.move_to_end(key)
+                return store[key]
+        try:
+            run = runcache.load_run_cached(path, root, runcache.cache_dir(), progress)
+        except BaseException:
+            with guard:
+                locks.pop(key, None)
+            raise
+        with guard:  # stored and unlocked together, so no session loads it twice
+            store[key] = run
+            locks.pop(key, None)
+            while len(store) > RUNS_KEPT:
+                store.popitem(last=False)
+    return run
 
 
 @st.cache_resource(max_entries=16)  # each entry can be a full copy of a run
@@ -367,15 +408,37 @@ with st.sidebar:
         files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
         return max(f.stat().st_mtime for f in files if f.is_file())
 
-    def load(name: str) -> Run | None:
+    # A progress bar over every run's log bytes, only shown once a run is actually
+    # read (from disk or the disk cache): runs already in memory never report.
+    load_slot = st.empty()
+    run_bytes = {n: max(log_bytes(p), 1) for n, p in run_dirs.items()}
+    total_bytes = sum(run_bytes.values())
+    bytes_before = 0
+
+    def load(i: int, name: str) -> Run | None:
         """The run, or None if it has no episodes yet (still training?) or can't be read."""
+
+        def progress(label: str, fraction: float) -> None:
+            done = (bytes_before + fraction * run_bytes[name]) / total_bytes
+            load_slot.progress(
+                min(done, 1.0),
+                text=f"Loading run {i}/{len(run_dirs)}: {name} · {label} "
+                f"({run_bytes[name] / 1e6:,.0f} MB)",
+            )
+
         try:
-            run = cached_run(str(run_dirs[name]), str(root), run_mtime(run_dirs[name]), pkg_mtime)
+            run = cached_run(
+                str(run_dirs[name]), str(root), run_mtime(run_dirs[name]), pkg_mtime, progress
+            )
         except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
             return None
         return None if run.episodes.empty else run
 
-    loaded = {n: load(n) for n in run_dirs}
+    loaded = {}
+    for i, n in enumerate(run_dirs, 1):
+        loaded[n] = load(i, n)
+        bytes_before += run_bytes[n]
+    load_slot.empty()
     run_index = find.run_index(loaded)
 
     # Every run starts selected; runs that appear later (Reload runs) are added
@@ -408,7 +471,8 @@ with st.sidebar:
         icon=":material/refresh:",
         help="Read the runs again, e.g. after a training run finished",
     ):
-        cached_run.clear()
+        with run_locks()[0]:
+            run_store().clear()
         cached_filtered.clear()
         st.rerun()
 
@@ -668,6 +732,174 @@ def run_sheet_grid(sheet_runs: list[Run], ci, means: dict, best_run: str | None)
                 )
 
 
+IQM_HELP = (
+    "**Interquartile mean (IQM)**: the mean of the middle 50% of games, dropping the best "
+    "and worst quarter, as Agarwal et al. (2021) recommend for RL results: steadier than the "
+    "mean, less coarse than the median."
+)
+
+
+def iqm_table(by_group: bool) -> None:
+    """IQM of ante and return with stratified bootstrap 95% CIs (``stats.iqm_summary``)."""
+    iq = stats.iqm_summary(runs, by_group)
+    if not len(iq):
+        return
+    shared = (iq["method"] == stats.SHARED_GAMES).any()
+    st.caption(
+        IQM_HELP
+        + " 95% CI by stratified bootstrap: "
+        + (
+            "where a group's runs played the same games (eval episodes), training seeds are "
+            "redrawn within each game, as rliable does, so the interval reflects seed-to-seed "
+            "variation; otherwise episodes are redrawn within each run."
+            if by_group and shared
+            else "episodes are redrawn within each run."
+        )
+    )
+    num = st.column_config.NumberColumn(format="%.3f")
+    table(iq, column_config={names.column(c): num for c in ("mean", "iqm", "iqm_low", "iqm_high")})
+
+
+POI_HELP = (
+    "**Probability of improvement** (Agarwal et al. 2021): the chance that a game from this "
+    "{unit} reaches a higher ante than a game from the baseline, ties counting half. 0.5 means "
+    "no difference; a CI that excludes 0.5 is a reliable difference in either direction. Unlike "
+    "a difference in means it says how often one agent gets further, not by how much. "
+)
+
+
+def improvement_table(by_group: bool, baseline: str) -> None:
+    """``stats.improvement`` of each run / group over ``baseline``, with its caption."""
+    poi = stats.improvement(runs, baseline, by_group)
+    if not len(poi):
+        return
+    how = {
+        "paired games": "paired: compared game by game on the games both played, games "
+        "redrawn for the CI",
+        stats.SHARED_GAMES: "on the games every run played, per game over every pair of "
+        "seeds and averaged over games; CI by redrawing seeds within each game (rliable)",
+        stats.WITHIN_RUNS: "unpaired (no shared games); CI by redrawing episodes within each run",
+    }
+    used = "; ".join(f"*{m}*: {how[m]}" for m in poi["method"].unique())
+    st.caption(POI_HELP.format(unit="group" if by_group else "run") + used + ". 95% CI.")
+    num = st.column_config.NumberColumn(format="%.3f")
+    table(poi, column_config={names.column(c): num for c in ("p_improvement", "p_low", "p_high")})
+
+
+def profile_chart(by_group: bool) -> None:
+    """``stats.performance_profile`` of the selection as a chart."""
+    prof = stats.performance_profile(runs, by_group)
+    if not len(prof):
+        return
+    fig = plots.performance_profile(prof, names)
+    if by_group:
+        fig.update_layout(legend_title_text="Group")
+    chart(
+        fig,
+        "performance profile",
+        "Performance profile (Agarwal et al. 2021): for each ante k, the share of games that "
+        "reached ante k or further, one line per "
+        + ("group" if by_group else "run")
+        + ". It starts at 100% and falls where runs end, so it shows where along the run "
+        "each agent breaks down, which a single mean can't. A line above another at every k "
+        "dominates it. Band: 95% stratified bootstrap CI ("
+        + (
+            "training seeds redrawn within each shared game where the group's runs played the "
+            "same games, otherwise episodes within each run"
+            if by_group
+            else "episodes redrawn within the run"
+        )
+        + ").",
+    )
+
+
+def power_section(by_group: bool, baseline: str | None) -> None:
+    """How small a difference in mean ante this selection can detect, and what it
+    would take to detect a chosen one (``stats.power_runs`` / ``power_groups``)."""
+    st.subheader("Can these runs tell agents apart?")
+    target = st.number_input(
+        "Difference in mean ante to detect",
+        min_value=0.01,
+        value=0.25,
+        step=0.05,
+        key="power_target",
+        help="The smallest difference you'd care about between two agents.",
+    )
+    shown = "two-sided test, α = 0.05, 80% power (exact noncentral t)"
+    if by_group:
+        pw = stats.power_groups(runs, target)
+        if not need(pw, "group with two or more runs to estimate seed-to-seed variation"):
+            return
+        st.caption(
+            "Comparing two groups on the mean of their runs' mean ante, as the comparison above "
+            "does. Ante varies from game to game (SD within a run) and from seed to seed (SD of "
+            "the runs' true means, after removing game noise). **Detectable now**: the "
+            "smallest difference found 80% of the time with this many seeds and games per seed. "
+            "**Seeds needed**: per group, for your difference with this many games per seed; "
+            "with unlimited games only seed-to-seed variation is left. Treats the groups as "
+            f"independent (no pairing on shared eval seeds), so it's conservative. {shown}."
+        )
+        worst = pw.loc[pw["mde"].idxmax()]
+        cols = st.columns(3)
+        cols[0].metric(
+            "Detectable now",
+            f"{worst['mde']:.2f} ante",
+            help=f"Worst group: {worst['group']}",
+        )
+        needed = pw["seeds_needed"].dropna()
+        cols[1].metric(
+            f"Seeds needed for {target:g}",
+            f"{int(needed.max())}" if len(needed) else f"> {stats.MAX_N:,}",
+            help=f"With {int(worst['games_per_seed'])} games per seed, the largest over the groups",
+        )
+        floor = pw["seeds_needed_any_games"].dropna()
+        cols[2].metric(
+            "With unlimited games",
+            f"{int(floor.max())} seeds" if len(floor) == len(pw) else "unknown",
+            help="Seeds needed if every seed played infinitely many games. Unknown when a "
+            "group's seed-to-seed variation is estimated as 0: too small to see with these games.",
+        )
+        if worst["mde"] > target:
+            st.warning(
+                f"With {int(worst['seeds'])} seeds and {int(worst['games_per_seed'])} games per "
+                f"seed, the smallest difference these groups can reliably detect is "
+                f"{worst['mde']:.2f} ante, more than the {target:g} you're after: a "
+                "non-significant difference here says little."
+            )
+        num = st.column_config.NumberColumn(format="%.3f")
+        table(pw, column_config={names.column(c): num for c in ("sd_game", "sd_seed", "mde")})
+        return
+    if baseline is None:
+        st.info("Select two or more runs to see what they can tell apart.")
+        return
+    pw = stats.power_runs(runs, baseline, target)
+    if not need(pw, "runs to compare with the baseline"):
+        return
+    st.caption(
+        f"Each run against {baseline} on mean ante. Paired on games both played (same seed, "
+        "deck and stake), which removes seed luck, otherwise two-sample. **Detectable now**: "
+        "the smallest difference found 80% of the time with this many games. **Games needed**: "
+        f"per run, for your difference. {shown}."
+    )
+    worst = pw.loc[pw["mde"].idxmax()]
+    cols = st.columns(2)
+    cols[0].metric("Detectable now", f"{worst['mde']:.2f} ante", help=f"Worst run: {worst['run']}")
+    needed = pw["games_needed"].dropna()
+    cols[1].metric(
+        f"Games needed for {target:g}",
+        f"{int(needed.max()):,}" if len(needed) == len(pw) else f"> {stats.MAX_N:,}",
+        help="The largest over the runs",
+    )
+    if worst["mde"] > target:
+        st.warning(
+            f"With {int(worst['games'])} games the smallest difference these runs can reliably "
+            f"detect is {worst['mde']:.2f} ante, more than the {target:g} you're after: a "
+            "non-significant difference here says little."
+        )
+    num = st.column_config.NumberColumn(format="%.3f")
+    table(pw, column_config={names.column(c): num for c in ("sd", "mde")})
+
+
 # --- Overview -------------------------------------------------------------
 with tabs[0]:
     if tabs[0].open:
@@ -710,6 +942,7 @@ with tabs[0]:
                     stats.run_means(runs),
                     column_config={names.column(c): num for c in stats.OUTCOMES.values()},
                 )
+            iqm_table(by_group=True)
             if len(group_map) > 1:
                 baseline = st.selectbox(
                     "Compare against baseline group", list(group_map), key="baseline_group"
@@ -727,6 +960,8 @@ with tabs[0]:
                         if c.endswith(("_diff", "_low", "_high", "_p"))
                     },
                 )
+                improvement_table(by_group=True, baseline=baseline)
+            power_section(by_group=True, baseline=None)
         else:
             summary = metrics.summary(runs)
             table(
@@ -753,6 +988,7 @@ with tabs[0]:
                         names.column(c): num for c in ("mean", "ci_low", "ci_high", "std")
                     },
                 )
+            iqm_table(by_group=False)
             if len(runs) > 1:
                 baseline = st.selectbox(
                     "Compare against baseline", [r.name for r in runs], key="baseline_run"
@@ -783,6 +1019,8 @@ with tabs[0]:
                     }
                     | {names.column(c): pval for c in ("mann_whitney_p", "fisher_p", "wilcoxon_p")},
                 )
+                improvement_table(by_group=False, baseline=baseline)
+            power_section(by_group=False, baseline=baseline if len(runs) > 1 else None)
         if eval_runs:
             st.subheader("Evaluation on fixed seeds")
             ecurve = stats.group_eval_curve(eval_runs) if by_group else stats.eval_curve(eval_runs)
@@ -839,6 +1077,7 @@ with tabs[0]:
                 "per run. Bars further right mean the agent gets further; winning means "
                 "clearing ante 8.",
             )
+            profile_chart(by_group)
         with st.expander("Run configs"):
             for r in runs:
                 st.markdown(f"**{r.name}**")
@@ -1825,7 +2064,14 @@ with export_area, st.expander("Export"):
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
     st.download_button(
         "Data (ZIP of CSVs)",
-        data=functools.partial(export.export_zip, runs, selection, window, top),
+        data=functools.partial(
+            export.export_zip,
+            runs,
+            selection,
+            window,
+            top,
+            st.session_state.get("power_target", 0.25),
+        ),
         file_name=f"balatro_runs_{stamp}.zip",
         mime="application/zip",
         key="dl_data",

@@ -232,7 +232,134 @@ def group_comparison(runs: list[Run], baseline: str) -> str:
     return table(rows, headers, caption, "group_comparison", "lrrrrr")
 
 
-def tables(runs: list[Run]) -> dict[str, str]:
+def _iqm_table(runs: list[Run], by_group: bool) -> str:
+    iq = stats.iqm_summary(runs, by_group)
+    if iq.empty:
+        return ""
+    key = "group" if by_group else "run"
+    rows = []
+    for name, g in iq.groupby(key, sort=False):
+        by = g.set_index("outcome")
+        cells = [
+            with_ci(by.loc[o, "iqm"], by.loc[o, "iqm_low"], by.loc[o, "iqm_high"])
+            if o in by.index
+            else "--"
+            for o in ("ante reached", "return")
+        ]
+        first = g.iloc[0]
+        rows.append(
+            [escape(name), str(first["runs"]), str(first["games"]), *cells, escape(first["method"])]
+        )
+    how = (
+        "for groups whose runs played the same eval games, training seeds redrawn within each "
+        "game (rliable's stratified bootstrap); otherwise episodes redrawn within each run"
+        if by_group
+        else "episodes redrawn within the run"
+    )
+    return table(
+        rows,
+        [key.capitalize(), "Runs", "Games", "Ante reached IQM", "Return IQM", "Bootstrap"],
+        "Interquartile mean (IQM; Agarwal et al., 2021) with 95\\% stratified bootstrap CI: "
+        f"{how}.",
+        f"{'group_' if by_group else ''}iqm",
+        "lrrrrl",
+    )
+
+
+def _improvement_table(runs: list[Run], baseline: str, by_group: bool) -> str:
+    poi = stats.improvement(runs, baseline, by_group)
+    if poi.empty:
+        return ""
+    key = "group" if by_group else "run"
+    rows = [
+        [
+            escape(r[key]),
+            str(r["games"]),
+            with_ci(r["p_improvement"], r["p_low"], r["p_high"], lambda x: num(x, 3)),
+            escape(r["method"]),
+        ]
+        for _, r in poi.iterrows()
+    ]
+    return table(
+        rows,
+        [key.capitalize(), "Games", r"$P(X > Y)$ [95\% CI]", "Pairing"],
+        f"Probability of improvement over {escape(baseline)} on ante reached (Agarwal et al., "
+        "2021): the chance a game of the row's agent reaches a higher ante than one of the "
+        "baseline's, ties counting half; 0.5 means no difference.",
+        f"{'group_' if by_group else ''}improvement",
+        "lrrl",
+    )
+
+
+def _count(x: object) -> str:
+    return "--" if _nan(x) else f"{int(x):,}".replace(",", "{,}")
+
+
+def power(runs: list[Run], baseline: str, target: float) -> str:
+    pw = stats.power_runs(runs, baseline, target)
+    if pw.empty:
+        return ""
+    rows = [
+        [
+            escape(r["run"]),
+            "yes" if r["paired"] else "no",
+            str(r["games"]),
+            num(r["mde"]),
+            _count(r["games_needed"]),
+        ]
+        for _, r in pw.iterrows()
+    ]
+    return table(
+        rows,
+        ["Run", "Paired", "Games", "Detectable", f"Games for {num(target)}"],
+        f"Power against {escape(baseline)} on mean ante (two-sided, $\\alpha = 0.05$, 80\\% "
+        "power): the smallest difference detected with the current games, and the games per "
+        f"run needed to detect a difference of {num(target)} ante.",
+        "power",
+        "llrrr",
+    )
+
+
+def group_power(runs: list[Run], target: float) -> str:
+    pw = stats.power_groups(runs, target)
+    if pw.empty:
+        return ""
+    rows = [
+        [
+            escape(r["group"]),
+            str(r["seeds"]),
+            str(r["games_per_seed"]),
+            num(r["sd_game"]),
+            num(r["sd_seed"]),
+            num(r["mde"]),
+            _count(r["seeds_needed"]),
+            _count(r["seeds_needed_any_games"]),
+        ]
+        for _, r in pw.iterrows()
+    ]
+    return table(
+        rows,
+        [
+            "Group",
+            "Seeds",
+            "Games/seed",
+            r"SD$_{\mathrm{game}}$",
+            r"SD$_{\mathrm{seed}}$",
+            "Detectable",
+            f"Seeds for {num(target)}",
+            r"Seeds, $\infty$ games",
+        ],
+        "Power of a comparison between two groups like each one, on the mean of their runs' "
+        "mean ante (two-sided, $\\alpha = 0.05$, 80\\% power): ante's game-to-game and "
+        "seed-to-seed SDs, the smallest difference detected now, and the seeds per group needed "
+        f"to detect {num(target)} ante with these games per seed and with unlimited games "
+        "(-- when seed-to-seed variation is estimated as 0).",
+        "group_power",
+        "lrrrrrrr",
+    )
+
+
+def tables(runs: list[Run], target: float = 0.25) -> dict[str, str]:
     """Every LaTeX table for ``runs`` (baseline: the first run / group), keyed by
     file stem.  Group tables only when some group has more than one run."""
     if not runs:
@@ -241,8 +368,14 @@ def tables(runs: list[Run]) -> dict[str, str]:
         "summary": summary(runs),
         "summary_ci": summary_ci(runs),
         "run_comparison": run_comparison(runs, runs[0].name),
+        "iqm": _iqm_table(runs, by_group=False),
+        "improvement": _improvement_table(runs, runs[0].name, by_group=False),
+        "power": power(runs, runs[0].name, target),
     }
     if any(len(g) > 1 for g in stats.groups(runs).values()):
         out["group_summary"] = group_summary(runs)
         out["group_comparison"] = group_comparison(runs, stats.group_of(runs[0]))
+        out["group_iqm"] = _iqm_table(runs, by_group=True)
+        out["group_improvement"] = _improvement_table(runs, stats.group_of(runs[0]), by_group=True)
+        out["group_power"] = group_power(runs, target)
     return {k: v for k, v in out.items() if v}

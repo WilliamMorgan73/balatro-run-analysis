@@ -72,8 +72,13 @@ def with_names(df: pd.DataFrame, keys: dict[str, str] | None = None) -> pd.DataF
     return out
 
 
-def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[str, pd.DataFrame]:
-    """Every table the dashboard shows, keyed by file stem."""
+def computed_tables(
+    runs: list[Run], window: int = 50, top: int = 15, target: float = 0.25
+) -> dict[str, pd.DataFrame]:
+    """Every table the dashboard shows, keyed by file stem.  ``target``: the
+    difference in mean ante the power tables size the eval set for."""
+    base = runs[0].name if runs else ""
+    base_group = stats.group_of(runs[0]) if runs else ""
     tables: dict[str, pd.DataFrame] = {
         "summary": with_names(metrics.summary(runs), {"decks": "items", "stakes": "stakes"}),
         "summary_ci": stats.summary_ci(runs),
@@ -85,6 +90,15 @@ def computed_tables(runs: list[Run], window: int = 50, top: int = 15) -> dict[st
             stats.compare_groups(runs, stats.group_of(runs[0])) if runs else pd.DataFrame()
         ),
         "group_run_means": stats.run_means(runs),
+        # Agarwal et al. (2021): IQM, performance profiles, probability of improvement
+        "iqm": stats.iqm_summary(runs),
+        "group_iqm": stats.iqm_summary(runs, by_group=True),
+        "performance_profile": stats.performance_profile(runs),
+        "group_performance_profile": stats.performance_profile(runs, by_group=True),
+        "improvement": stats.improvement(runs, base),
+        "group_improvement": stats.improvement(runs, base_group, by_group=True),
+        "power": stats.power_runs(runs, base, target),
+        "group_power": stats.power_groups(runs, target),
         "by_deck": with_names(metrics.by_deck(runs)),
         "learning_curve": metrics.learning_curve(runs, window),
         # eval runs, or each training run's eval episodes (runs without them are skipped)
@@ -152,6 +166,7 @@ def export_zip(
     selection: dict[str, object],
     window: int = 50,
     top: int = 15,
+    target: float = 0.25,
 ) -> bytes:
     """ZIP with ``runs/<run>/{episodes,steps,rounds}.csv``, ``tables/*.csv``,
     ``latex/*.tex`` (the main result tables) and a README."""
@@ -172,9 +187,9 @@ def export_zip(
                 put(f"{base}/rounds.csv", with_names(r.rounds))
             if r.shops is not None:  # one row per offered item
                 put(f"{base}/shop_offers.csv", with_names(economy.offers(r), {"key": "item"}))
-        for name, df in computed_tables(runs, window, top).items():
+        for name, df in computed_tables(runs, window, top, target).items():
             put(f"tables/{name}.csv", df)
-        for name, tex in latex.tables(runs).items():
+        for name, tex in latex.tables(runs, target).items():
             z.writestr(f"latex/{name}.tex", tex)
             written.append(f"latex/{name}.tex")
 
@@ -188,7 +203,8 @@ def export_zip(
             "Key columns (j_..., b_..., bl_..., buy_card_0) are exact game keys;",
             "each has a <column>_name twin with the in-game name. Lists are ';'-separated.",
             "latex/*.tex are booktabs tables for \\input (need booktabs and graphicx);",
-            "comparisons use the first selected run / group as the baseline.",
+            "comparisons use the first selected run / group as the baseline;",
+            f"power tables are sized for a difference of {target:g} in mean ante.",
             "",
             "Files:",
             *(f"  {w}" for w in written),

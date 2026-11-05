@@ -30,8 +30,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
-# ρ is Spearman's rho in chart labels
-allowed-confusables = ["ρ"]
+# ρ is Spearman's rho in chart labels, α a significance level; × is "by" (seeds × games)
+allowed-confusables = ["ρ", "α", "×"]
 
 [tool.ruff.lint.per-file-ignores]
 # fake game files keep the game's one-line loc_vars format on purpose
