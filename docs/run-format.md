@@ -1,4 +1,4 @@
-# Run format (log_version 7)
+# Run format (log_version 15)
 
 The contract between `balatro-shop-rl`, which writes runs (`src/shop_rl/runlog.py`,
 `shop_env.py`, `train.py`), and this dashboard, which only reads them
@@ -35,7 +35,7 @@ Every command-line option of `scripts/train.py` (`episodes`, `play`, `shop`, `se
 | `play_agent`, `shop_agent` | class names, e.g. `StrongPlayAgent`, `QLearningShopAgent` |
 | `play_params`, `agent_params` | the agents' parameters (`{}` if none) |
 | `n_actions`, `action_names` | the shop action space: 17 names, index = action id |
-| `log_version` | this spec's version: 7 |
+| `log_version` | this spec's version: 15 |
 | `eval_set` | the eval games, `[{seed, deck, stake}, ...]` (`[]` without eval) |
 | `started` | local start time, ISO 8601 |
 | `shop_rl_commit` | `balatro-shop-rl` commit, `-dirty` if it had uncommitted changes; `null` outside git |
@@ -75,6 +75,7 @@ One object per shop decision:
 | `episode`, `step` | episode and 0-based decision number within it |
 | `ante`, `round`, `blind_on_deck` | where the run is |
 | `jokers_before`, `consumables_before` | held keys before acting |
+| `joker_state` | one entry per `jokers_before` slot: a scaling joker's current values (see [Scaling jokers](#scaling-jokers)), `null` for a joker that doesn't scale (log_version 15) |
 | `legal` | shop action ids that were legal |
 | `action`, `action_name` | what was chosen |
 | `item_key`, `item_cost` | the item it targets and the money it moves: a buy's price, a sell's sale value, a use's card price; `null` for reroll/skip |
@@ -121,7 +122,7 @@ times the size of `steps.jsonl`. One object per play or discard, in order:
 | `hand` | the cards held before acting, in hand order (see [Cards](#cards)) |
 | `picked` | indices into `hand` of the cards played or discarded (Cerulean Bell's forced card included) |
 | `hand_level` | the played hand's level when played (before scoring; Space Joker levels up during it); `null` for a discard |
-| `jokers` | jokers held when acting, in order: a key, or `{"k": key, "ed": edition}` |
+| `jokers` | jokers held when acting, in order: a key, or `{"k": key, "ed": edition, "s": values}` with only what applies (`s`: a scaling joker's current values, log_version 15; see [Scaling jokers](#scaling-jokers)) |
 | `hand_type`, `chips`, `mult`, `score`, `debuffed` | the engine's scoring of a play (`score` = floor(chips × mult), inf past a double); `null` for a discard |
 | `chips_total` | the blind's score after this action |
 | `hands_left`, `discards_left`, `dollars` | after this action |
@@ -145,6 +146,16 @@ A plain card is its engine `card_key`: suit letter (`H C D S`) and rank (`2`-`9`
 enhancement key, `ed` one of `foil`/`holo`/`polychrome`/`negative`, `seal` one of
 `Red`/`Blue`/`Gold`/`Purple`).
 
+## Scaling jokers
+
+From log_version 15, a joker that changes as the run goes on (Spare Trousers' +Mult, Ice
+Cream's +Chips, Ramen's XMult) carries its current values as `{path: value}`, the path being
+where the engine keeps the value on the joker (`ability`), e.g. `{"mult": 6}`,
+`{"extra.chips": 12}`, `{"x_mult": 1.91}`. The paths are the targets of the joker's updates
+in `balatro-shop-rl`'s joker algebra (`runlog.STATE_FIELDS`); today each scaling joker has
+one. The dashboard labels them as the game does ("+6 Mult", "X1.91 Mult") and shows any other
+path as logged.
+
 ## Version history
 
 | Version | Change |
@@ -156,3 +167,11 @@ enhancement key, `ed` one of `foil`/`holo`/`polychrome`/`negative`, `seal` one o
 | 5 | `earn_tags`; `earn_rent` filled in; `dollars_after_pack`; returns from a pack aren't new shop visits |
 | 6 | `episodes.csv` `max_ante`; ante reward only for a new highest ante; deck/stake from the env's own RNG; a sell's `item_cost` is its sale value. Since the repo split: `shop_rl_commit` and the pinned `jackdaw_commit` (additions only, so no version bump) |
 | 7 | `eval/hands.jsonl` and `eval/decks.jsonl` (additions only: older readers ignore them) |
+| 8 | Upstream Jackdaw (Rust engine): `jackdaw_version` replaces `jackdaw_commit`; `rounds.jsonl` keeps `earn_total` but the other `earn_*` parts are `null`; `eval/hands.jsonl` `joker_effects` (not read here yet) |
+| 9 | `episodes.csv` `heldout_offered` / `heldout_vetoed` / `heldout_held`; `shops.jsonl` items `"hidden": true`; `--shop dqn` runs add `dqn.jsonl` and `model.pt` (not read here yet) |
+| 10 | `eval/offers.jsonl` and config `offer_jokers` (not read here yet) |
+| 11 | `dqn.jsonl` `fn_table` and `redrawn`; `agent_params` `discount_per` |
+| 12 | `--round-features` (`agent_params` `round_features`) |
+| 13 | `--relative-suits` (config `relative_suits`) |
+| 14 | Training seeds `TRAIN_s<seed>_<n>` (config `seed_prefix`); optional `test/` folder in the eval format (`--test-episodes`). Not read as part of the run here yet: each `test/` loads as a run of its own |
+| 15 | A scaling joker's current values: `s` on its entry in `hands.jsonl` `jokers`, and `steps.jsonl` `joker_state` (see [Scaling jokers](#scaling-jokers)) |

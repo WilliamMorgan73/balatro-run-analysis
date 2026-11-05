@@ -9,7 +9,7 @@ import pytest
 from conftest import FACE_COLOUR, HANDS_DIR, RUNS_DIR
 from PIL import Image
 
-from balatro_analysis import cards, hands, replay
+from balatro_analysis import cards, hands, metrics, replay
 from balatro_analysis.loader import load_run
 from balatro_analysis.names import Names
 from balatro_analysis.sprites import Sprites, game_archive
@@ -152,7 +152,7 @@ def test_level_and_jokers_logged(eval_run):
     assert plays["level"].tolist() == [1, 1, 2] and plays["level_logged"].all()
     assert h.loc[0, "jokers_held"] == ["j_joker"]
     assert h.loc[2, "jokers_held"] == ["j_joker", "j_greedy_joker"]
-    assert hands.blind_jokers(eval_run, 0, 1) == (["j_joker"], True)
+    assert hands.blind_jokers(eval_run, 0, 1) == (["j_joker"], True, [None])
 
     page = replay.blind_html(h[h["round"] == 2], Names(), lambda c: None, lambda k: None)
     assert 'title="Hand level when played">lvl.2<' in page
@@ -172,11 +172,76 @@ def test_level_and_jokers_estimated_without_them(eval_run):
     assert h["jokers_held"].isna().all()
     page = replay.blind_html(h[h["round"] == 2], Names(), lambda c: None, lambda k: None)
     assert 'class="rp-lvl est"' in page and 'class="rp-jchange"' not in page
-    jokers, logged = hands.blind_jokers(eval_run, 0, 2)
+    jokers, logged, states = hands.blind_jokers(eval_run, 0, 2)
     assert not logged and jokers == ["j_joker"]  # held leaving the shop after round 1
+    assert states == [None]  # before log_version 15
 
 
 def test_parse_joker():
     assert cards.parse_joker("j_joker") == ("j_joker", None)
     assert cards.parse_joker({"k": "j_joker", "ed": "foil"}) == ("j_joker", "foil")
     assert cards.joker_keys(None) is None
+
+
+# --- log_version 15: scaling jokers' current values ----------------------------
+
+
+def test_joker_state_and_labels():
+    assert cards.joker_state({"k": "j_trousers", "s": {"mult": 6}}) == {"mult": 6}
+    assert cards.joker_state({"k": "j_joker", "ed": "e_foil"}) is None
+    assert cards.joker_state("j_joker") is None
+    # a steps.jsonl joker_state item read by Arrow: every path any joker had
+    assert cards.joker_state({"mult": None, "x_mult": 1.91, "extra.chips": None}) == {
+        "x_mult": 1.91
+    }
+    assert cards.joker_state({"mult": None}) is None
+    assert cards.joker_states(None) is None
+    assert cards.state_label("j_trousers", {"mult": 6}) == "+6 Mult"
+    assert cards.state_label("j_ramen", {"x_mult": 1.9134}) == "X1.91 Mult"
+    assert cards.state_label("j_ramen", {"x_mult": 2.0}) == "X2 Mult"
+    assert cards.state_label("j_square", {"extra.chips": 12}) == "+12 Chips"
+    assert cards.state_label("j_selzer", {"extra": 7}) == "7 hands left"
+    assert cards.state_label("j_new", {"odd.path": 3}) == "odd.path 3"  # unknown: as logged
+    assert cards.state_label("j_joker", None) == ""
+    held, states = ["j_joker", "j_trousers"], [None, {"mult": 6}]
+    assert cards.state_summary(held, states, str) == "j_trousers +6 Mult"
+    assert cards.state_summary(held, None, str) == ""
+
+
+def _v15(eval_run):
+    """``eval_run`` as a log_version 15 run: Spare Trousers scaling across a blind."""
+    h = eval_run.hands.copy()
+    jokers = []
+    for i in range(len(h)):
+        held = list(h.at[i, "jokers"]) if isinstance(h.at[i, "jokers"], list) else []
+        jokers.append([{"k": "j_trousers", "s": {"mult": 2 * i}}, *held])
+    h["jokers"] = jokers
+    eval_run.hands = h
+    eval_run._memo.clear()
+    return eval_run
+
+
+def test_scaling_jokers_in_the_replay(eval_run):
+    run = _v15(eval_run)
+    h = hands.episode_hands(run, 0)
+    assert h.loc[1, "joker_states"][0] == {"mult": 2}
+    keys, logged, states = hands.blind_jokers(run, 0, 1)
+    assert logged and keys[0] == "j_trousers" and states[0] == {"mult": 0}
+    page = replay.blind_html(h[h["round"] == 1], Names(pretty=True), lambda c: None, lambda k: None)
+    assert "<b>Spare Trousers</b> +0 Mult → +2 Mult" in page
+
+
+def test_joker_state_from_the_shop_log(eval_run):
+    """Without a hand log, a blind's jokers and values come from the shop before it."""
+    s = eval_run.steps.copy()
+    s["joker_state"] = [[None] * len(j) for j in s["jokers_before"]]
+    last = s[s["episode"] == 0].sort_values("step").groupby("round").tail(1).index
+    s.at[last[0], "joker_state"] = [{"mult": 8}] + [None] * (
+        len(s.at[last[0], "jokers_before"]) - 1
+    )
+    eval_run.steps, eval_run.hands = s, None
+    eval_run._memo.clear()
+    _, logged, states = hands.blind_jokers(eval_run, 0, 2)
+    assert not logged and states[0] == {"mult": 8}
+    rounds = metrics.episode_rounds(eval_run, 0)
+    assert "joker_state" in rounds

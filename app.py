@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import collections
 import functools
+import html
 import importlib
 import sys
 import threading
@@ -63,6 +64,7 @@ reload_if_changed()
 
 from balatro_analysis import (  # noqa: E402
     actions,
+    cards,
     collection,
     details,
     economy,
@@ -306,6 +308,28 @@ def joker_cards() -> list[collection.JokerCard]:
         cached_sprites(str(archive), pkg_mtime, 1) if archive else None,
         metrics.joker_held_by_run(runs),
     )
+
+
+def with_joker_values(df: pd.DataFrame, jokers: str) -> pd.DataFrame:
+    """``df`` with its ``joker_state`` column (log_version 15: each held joker's
+    values, if it scales) as readable text, "Green Joker +4 Mult", in
+    ``joker_values`` right after the ``jokers`` column."""
+    if "joker_state" not in df or jokers not in df:
+        return df
+    text = [
+        cards.state_summary(_cell_list(k), _cell_list(s), names.item)
+        for k, s in zip(df[jokers], df["joker_state"], strict=True)
+    ]
+    out = df.drop(columns="joker_state")
+    out.insert(out.columns.get_loc(jokers) + 1, "joker_values", text)
+    return out
+
+
+def _cell_list(value) -> list | None:
+    """A list cell as a list (Arrow-backed cells can be arrays); None if missing."""
+    if value is None or isinstance(value, str | dict | float):
+        return None
+    return list(value)
 
 
 def joker_grid(items: list[tuple[str, str]], prefix: str) -> None:
@@ -1967,16 +1991,28 @@ with tabs[8]:
                     if "beaten" in rounds_:
                         match = rounds_[rounds_["round"] == blind_round]["beaten"]
                         beaten = bool(match.iloc[0]) if len(match) else None
-                    held, logged = hands.blind_jokers(run, episode, blind_round)
+                    held, logged, held_states = hands.blind_jokers(run, episode, blind_round)
                     st.markdown("**Jokers held**")
                     if held:
-                        joker_grid([(j, "") for j in held], "ex-held")
+                        joker_grid(
+                            [
+                                (j, html.escape(cards.state_label(j, cards.joker_state(st_))))
+                                for j, st_ in zip(held, held_states, strict=False)
+                            ],
+                            "ex-held",
+                        )
                     st.caption(
                         ("None. " if not held else "")
                         + (
+                            "Under a scaling joker, its value at the time (Spare Trousers' "
+                            "+Mult, Ice Cream's +Chips). "
+                            if any(cards.joker_state(x) for x in held_states)
+                            else ""
+                        )
+                        + (
                             "As held at the first play or discard of this blind; changes "
-                            "during the blind are noted on the action. Click a joker for "
-                            "its effect."
+                            "during the blind, including scaling jokers' values, are noted on "
+                            "the action. Click a joker for its effect."
                             if logged
                             else "What was held leaving the shop before this blind (this run "
                             "didn't log jokers per play, so changes during the blind, "
@@ -2027,6 +2063,7 @@ with tabs[8]:
                             "point for the action and item; jumps between shop visits are the "
                             "round's cash-out.",
                         )
+                        timeline = with_joker_values(timeline, "jokers_before")
                         order = [
                             "step", "ante", "round", "dollars_before", "action_name", "item_key"
                         ]  # fmt: skip
@@ -2045,7 +2082,11 @@ with tabs[8]:
                                 "(after the shop before it); the first blind comes before any "
                                 "shop."
                             )
-                        item_table(rounds, ["jokers", "consumables"], "ex-blind")
+                        item_table(
+                            with_joker_values(rounds, "jokers"),
+                            ["jokers", "consumables"],
+                            "ex-blind",
+                        )
 
 # --- Export (sidebar, after every chart is registered) --------------------
 with export_area, st.expander("Export"):
