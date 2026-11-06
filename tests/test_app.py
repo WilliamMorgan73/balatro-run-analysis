@@ -455,6 +455,22 @@ def test_explorer_item_icons_open_details(runs_dir, fake_game, pretty):
     assert ("Buy card 1" if pretty else "buy_card_0") in shop
 
 
+def test_explorer_drops_icons_on_long_tables(copied_runs, fake_game):
+    """Past ICON_ROWS_MAX rows the episode finder shows joker names only: a strip
+    per row of a 30,000-episode run took several GB (an NCC job was OOM-killed)."""
+    csv = copied_runs / "run_small" / "episodes.csv"
+    header, *rows = csv.read_text().splitlines()
+    first = rows[0].split(",")
+    extra = [",".join([str(len(rows) + i), *first[1:]]) for i in range(1001)]
+    csv.write_text("\n".join([header, *rows, *extra]) + "\n")
+    at = _run(copied_runs, fake_game, tab="Episode explorer")
+    assert not at.exception
+    (episodes,) = [d.value for d in at.main.dataframe]
+    assert len(episodes) > 1000
+    assert "Final jokers icons" not in episodes and "Final jokers" in episodes
+    assert any("Icons are shown for up to 1,000 rows" in c.value for c in at.caption)
+
+
 # --- Finding episodes and runs (#17) ------------------------------------------
 
 
