@@ -3,11 +3,15 @@ suggestions ("best episode", "closest loss", "best run per group", ...)."""
 
 from __future__ import annotations
 
+import io
+import json
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 
+from balatro_analysis import loader
 from balatro_analysis.loader import Run
 from balatro_analysis.names import split_items
 
@@ -171,9 +175,29 @@ RUN_SORTS = {
 }
 
 
+def run_summary(path: str | Path, name: str) -> Run | None:
+    """What ``run_index`` needs of the run at ``path`` (its config, and each
+    episode's ante and outcome), read from ``config.json`` and ``episodes.csv``
+    only: listing runs doesn't load their logs.  None if it has no episodes yet
+    or can't be read."""
+    path = Path(path)
+    try:
+        cfg = path / "config.json"
+        config = json.loads(cfg.read_text()) if cfg.is_file() else {}
+        text = loader._complete_lines(path / "episodes.csv")
+        e = pd.read_csv(io.StringIO(text), usecols=lambda c: c in ("ante", "max_ante", "won"))
+    except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
+        return None
+    if e.empty:
+        return None
+    if "max_ante" in e:  # as loader._fix_episodes: "ante" is the highest ante played
+        e["ante"] = e.pop("max_ante")
+    return Run(name=name, path=path, episodes=e, config=config)
+
+
 def run_index(runs: dict[str, Run | None]) -> pd.DataFrame:
     """One row per run name (None: not loadable yet) with what the run list can
-    be sorted and filtered by."""
+    be sorted and filtered by.  A ``run_summary`` will do for each run."""
     rows = []
     for name, r in runs.items():
         e = r.episodes if r is not None else pd.DataFrame()

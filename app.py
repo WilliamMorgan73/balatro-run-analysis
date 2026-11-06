@@ -25,6 +25,8 @@ RELOAD_ORDER = [
     "names",
     "loader",
     "runcache",
+    "memory",
+    "find",
     "metrics",
     "hands",
     "economy",
@@ -71,6 +73,7 @@ from balatro_analysis import (  # noqa: E402
     export,
     find,
     hands,
+    memory,
     metrics,
     plots,
     replay,
@@ -98,7 +101,7 @@ def cli_runs_dir() -> Path:
     return args.runs_dir
 
 
-RUNS_KEPT = 24  # runs held in memory across reruns and sessions
+FILTERED_KEPT = 2  # filtered copies kept per run (each up to a full copy of it)
 # Tables longer than this show item names without icon strips: a strip is a ~20 KB
 # PNG per row, so a 30,000-episode table took several GB to build and send.
 ICON_ROWS_MAX = 1000
@@ -107,9 +110,10 @@ ICON_ROWS_MAX = 1000
 # The cached Runs themselves (not copies): cache_data would unpickle every run
 # (hundreds of MB) on each rerun.  Nothing writes to them; tabs filter copies.  A
 # plain dict rather than caching ``cached_run``, which may draw the progress bar.
-# Values are (run, the pkg_mtime it was last served under).
+# Values are (run, the pkg_mtime it was last served under, its memory in bytes).
+# The runs held stay within ``memory.run_budget()`` (see ``load_runs``).
 @st.cache_resource
-def run_store() -> collections.OrderedDict[tuple, tuple[Run, float]]:
+def run_store() -> collections.OrderedDict[tuple, tuple[Run, float, int]]:
     return collections.OrderedDict()
 
 
@@ -119,6 +123,18 @@ def run_locks() -> tuple[threading.Lock, dict[tuple, threading.Lock]]:
     (the second waits for the first); different runs still load in parallel.
     The first lock guards the store and the dict of locks."""
     return threading.Lock(), {}
+
+
+@st.cache_resource
+def run_sizes() -> dict[str, int]:
+    """Each run's memory (by path) when last loaded, to judge before loading it
+    again whether it fits.  Runs never loaded are guessed from their logs."""
+    return {}
+
+
+def run_size_guess(path: str) -> int:
+    """Memory the run at ``path`` will take once loaded."""
+    return run_sizes().get(path) or memory.estimate(log_bytes(path))
 
 
 def _sub_runs(run: Run) -> list[Run]:
@@ -133,27 +149,50 @@ def _served(store: collections.OrderedDict, key: tuple, pkg_mtime: float) -> Run
     if entry[1] != pkg_mtime:
         for r in _sub_runs(entry[0]):
             r._memo.clear()
-        store[key] = (entry[0], pkg_mtime)
+        store[key] = (entry[0], pkg_mtime, entry[2])
     return entry[0]
 
 
-def cached_run(path: str, root: str, mtime: float, pkg_mtime: float, progress=None) -> Run:
+def _make_room(store: collections.OrderedDict, budget: int | None, keep: set) -> None:
+    """Drop the least recently used runs until the store is within ``budget``,
+    never one in ``keep`` (the runs this rerun shows).  Guarded by the caller."""
+    if budget is None:
+        return
+    used = sum(v[2] for v in store.values())
+    for k in [k for k in store if k not in keep]:
+        if used <= budget:
+            break
+        used -= store.pop(k)[2]
+
+
+def cached_run(
+    path: str, root: str, mtime: float, pkg_mtime: float, progress=None, keep: set | None = None
+) -> Run:
     # mtime: re-written runs reload, reading only what was appended if this run is
     # still held from before.  The key holds the loading code's version, not
     # pkg_mtime, so editing the rest of the package keeps loaded runs (dropping only
     # what was memoised on them).  Runs unchanged since a previous session come
-    # from the disk cache.
+    # from the disk cache.  ``keep``: keys of runs this rerun already holds, which
+    # making room for this one mustn't drop; this run's key is added to it.
+    keep = set() if keep is None else keep
     store, key = run_store(), (path, root, mtime, runcache.code_version())
     guard, locks = run_locks()
     with guard:
         if key in store:
+            keep.add(key)
             return _served(store, key, pkg_mtime)
         lock = locks.setdefault(key, threading.Lock())
     with lock:
         with guard:  # loaded by another session while this one waited
             if key in store:
+                keep.add(key)
                 return _served(store, key, pkg_mtime)
             older = [v[0] for k, v in store.items() if k[:2] == key[:2] and k[3] == key[3]]
+            # room for it before reading it, so the peak stays within the budget
+            budget = memory.run_budget()
+            if budget is not None:
+                _make_room(store, budget - run_size_guess(path), keep)
+        before = memory.process_rss()
         try:
             run = runcache.load_run_cached(
                 path, root, runcache.cache_dir(), progress, older[-1] if older else None
@@ -162,27 +201,65 @@ def cached_run(path: str, root: str, mtime: float, pkg_mtime: float, progress=No
             with guard:
                 locks.pop(key, None)
             raise
+        after = memory.process_rss()
+        # what reading it took, unless that is less than its logs suggest (memory
+        # freed meanwhile, or another session loading at the same time)
+        size = max(memory.estimate(log_bytes(path)), (after or 0) - (before or 0))
+        if older:
+            size = max(size, run_sizes().get(path, 0))  # extended in place: as before
         with guard:  # stored and unlocked together, so no session loads it twice
             for old in [k for k in store if k[:2] == key[:2]]:
                 del store[old]  # an older copy of this run: don't hold both
-            store[key] = (run, pkg_mtime)
+            store[key] = (run, pkg_mtime, size)
+            run_sizes()[path] = size
             locks.pop(key, None)
-            while len(store) > RUNS_KEPT:
-                store.popitem(last=False)
+            keep.add(key)
+            _make_room(store, memory.run_budget(), keep)
     return run
 
 
-@st.cache_resource(max_entries=16)  # each entry can be a full copy of a run
-def cached_filtered(
-    _run: Run, key: tuple, start: float, end: float, decks: tuple, stakes: tuple, rounds
+@st.cache_data(max_entries=4096, show_spinner=False)
+def cached_summary(path: str, name: str, mtime: float) -> Run | None:
+    """``find.run_summary``; mtime: re-read once the run has logged more."""
+    return find.run_summary(path, name)
+
+
+@st.cache_resource
+def filter_lock() -> threading.Lock:
+    return threading.Lock()
+
+
+FILTERED = ("filtered",)  # where a run keeps its filtered copies, in its _memo
+
+
+def filtered_run(
+    run: Run, start: float, end: float, decks: tuple, stakes: tuple, rounds: tuple | None
 ) -> Run:
     """``metrics.filter_episodes``, kept across reruns: the same filters give the
-    same Run, so what tabs memoise on it (``loader.memo``) is computed once.
-    ``key`` identifies ``_run`` (not hashed): its path, mtime and the code mtime."""
-    rounds = list(rounds) if rounds is not None else None
-    return metrics.filter_episodes(
-        _run, start, end, decks=list(decks), stakes=list(stakes), eval_rounds=rounds
+    same Run, so what tabs memoise on it (``loader.memo``) is computed once.  The
+    copies live on ``run`` (its ``FILTERED_KEPT`` latest), so they go when it
+    leaves the run store rather than holding it in memory after."""
+    args = (start, end, decks, stakes, rounds)
+    with filter_lock():
+        kept = run._memo.setdefault(FILTERED, collections.OrderedDict())
+        if args in kept:
+            kept.move_to_end(args)
+            return kept[args]
+    out = metrics.filter_episodes(
+        run,
+        start,
+        end,
+        decks=list(decks),
+        stakes=list(stakes),
+        eval_rounds=list(rounds) if rounds is not None else None,
     )
+    if out is run:  # nothing filtered out: no copy to keep
+        return run
+    with filter_lock():
+        kept[args] = out
+        while len(kept) > FILTERED_KEPT:
+            kept.popitem(last=False)
+    return out
 
 
 @st.cache_resource(show_spinner="Checking chart export…")
@@ -460,38 +537,11 @@ with st.sidebar:
         files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
         return max(f.stat().st_mtime for f in files if f.is_file())
 
-    # A progress bar over every run's log bytes, only shown once a run is actually
-    # read (from disk or the disk cache): runs already in memory never report.
-    load_slot = st.empty()
-    run_bytes = {n: max(log_bytes(p), 1) for n, p in run_dirs.items()}
-    total_bytes = sum(run_bytes.values())
-    bytes_before = 0
-
-    def load(i: int, name: str) -> Run | None:
-        """The run, or None if it has no episodes yet (still training?) or can't be read."""
-
-        def progress(label: str, fraction: float) -> None:
-            done = (bytes_before + fraction * run_bytes[name]) / total_bytes
-            load_slot.progress(
-                min(done, 1.0),
-                text=f"Loading run {i}/{len(run_dirs)}: {name} · {label} "
-                f"({run_bytes[name] / 1e6:,.0f} MB)",
-            )
-
-        try:
-            run = cached_run(
-                str(run_dirs[name]), str(root), run_mtime(run_dirs[name]), pkg_mtime, progress
-            )
-        except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
-            return None
-        return None if run.episodes.empty else run
-
-    loaded = {}
-    for i, n in enumerate(run_dirs, 1):
-        loaded[n] = load(i, n)
-        bytes_before += run_bytes[n]
-    load_slot.empty()
-    run_index = find.run_index(loaded)
+    # Listing runs reads only their episodes.csv and config.json: only the runs
+    # picked below are loaded
+    run_index = find.run_index(
+        {n: cached_summary(str(p), n, run_mtime(p)) for n, p in run_dirs.items()}
+    )
 
     # Every run starts selected; runs that appear later (Reload runs) are added
     if st.session_state.get("_runs_root") != str(root):
@@ -567,12 +617,61 @@ with st.sidebar:
         settings()
         st.stop()
 
-    runs = [loaded[n] for n in picked if loaded[n] is not None]
-    not_ready = [n for n in picked if loaded[n] is None]
+    # A progress bar over the picked runs' log bytes, only shown once a run is
+    # actually read (from disk or the disk cache): runs already in memory never report.
+    load_slot = st.empty()
+    run_bytes = {n: max(log_bytes(run_dirs[n]), 1) for n in picked}
+    total_bytes = sum(run_bytes.values())
+    bytes_before = 0
+    held: set = set()  # store keys of the runs this rerun shows: kept while loading the rest
+
+    def load(i: int, name: str) -> Run | None:
+        """The run, or None if it has no episodes yet (still training?) or can't be read."""
+
+        def progress(label: str, fraction: float) -> None:
+            done = (bytes_before + fraction * run_bytes[name]) / total_bytes
+            load_slot.progress(
+                min(done, 1.0),
+                text=f"Loading run {i}/{len(picked)}: {name} · {label} "
+                f"({run_bytes[name] / 1e6:,.0f} MB)",
+            )
+
+        path = str(run_dirs[name])
+        try:
+            run = cached_run(path, str(root), run_mtime(run_dirs[name]), pkg_mtime, progress, held)
+        except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
+            return None
+        return None if run.episodes.empty else run
+
+    # Picked runs are loaded in order while they fit the memory budget; the rest
+    # are left out (and named) rather than overrun the machine's or the job's memory
+    budget = memory.run_budget()
+    loaded, over_budget, used = {}, [], 0
+    for i, n in enumerate(picked, 1):
+        size = run_size_guess(str(run_dirs[n]))
+        if budget is not None and loaded and used + size > budget:
+            over_budget.append(n)
+        else:
+            loaded[n] = load(i, n)
+            used += run_sizes().get(str(run_dirs[n]), size)
+        bytes_before += run_bytes[n]
+    load_slot.empty()
+
+    runs = [r for r in loaded.values() if r is not None]
+    not_ready = [n for n, r in loaded.items() if r is None]
     if not_ready:
         st.warning(
             f"Skipped {', '.join(not_ready)}: no episodes yet (still training?) or "
             "unreadable. **Reload runs** once it has logged some."
+        )
+    if over_budget:
+        wanted = used + sum(run_size_guess(str(run_dirs[n])) for n in over_budget)
+        st.warning(
+            f"Not loaded, to stay within memory: {', '.join(over_budget)}. The runs "
+            f"picked need about {wanted / 1e9:,.0f} GB "
+            f"and {budget / 1e9:,.0f} GB is set aside for runs. Pick fewer runs, give the "
+            f"dashboard more memory (Slurm `--mem`), or set `{memory.ENV}` (GB).",
+            icon=":material/memory:",
         )
     if not runs:
         settings()
@@ -651,15 +750,8 @@ with st.sidebar:
 
 
 def filtered(r: Run, start: float, end: float, rounds: list[int] | None = None) -> Run:
-    key = (str(r.path), run_mtime(run_dirs[r.name]), pkg_mtime)
-    return cached_filtered(
-        r,
-        key,
-        start,
-        end,
-        tuple(decks),
-        tuple(stakes),
-        tuple(rounds) if rounds is not None else None,
+    return filtered_run(
+        r, start, end, tuple(decks), tuple(stakes), tuple(rounds) if rounds is not None else None
     )
 
 

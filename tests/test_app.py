@@ -640,3 +640,18 @@ def test_overview_iqm_and_power_for_groups(group_runs_dir):
     assert any("Probability of improvement" in c.value for c in at.caption)
     profile = next(c.value for c in at.caption if c.value.startswith("Performance profile"))
     assert "one line per group" in profile
+
+
+def test_app_loads_picked_runs_within_memory_budget(runs_dir, tmp_path, monkeypatch):
+    """Runs beyond the memory budget aren't loaded (one run always is), and the
+    sidebar says which and why; unpicked runs aren't loaded at all."""
+    for name in ("run_a", "run_b", "run_c"):
+        shutil.copytree(runs_dir / "run_small", tmp_path / name)
+    monkeypatch.setenv("BALATRO_ANALYSIS_RUN_MEMORY", "0.000001")  # 1 KB: room for none
+    at = _run(tmp_path)
+    assert not at.exception
+    warning = next(w.value for w in at.sidebar.warning if "within memory" in w.value)
+    assert "run_b, run_c" in warning and "run_a" not in warning
+    at.sidebar.multiselect[0].set_value(["run_c"]).run()
+    assert not at.exception
+    assert not any("within memory" in w.value for w in at.sidebar.warning)

@@ -1,7 +1,13 @@
+import shutil
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
 from balatro_analysis import find
+from balatro_analysis.loader import load_run
+
+RUNS_DIR = Path(__file__).parent / "fixtures" / "runs"
 
 
 def test_episode_table(run):
@@ -131,3 +137,13 @@ def test_run_index(run):
     assert idx.loc[0, "episodes"] == 3 and idx.loc[0, "mean_ante"] == pytest.approx(4 / 3)
     assert idx.loc[0, "shop_agent"] == "RandomShopAgent"
     assert idx.loc[1, "episodes"] == 0 and pd.isna(idx.loc[1, "mean_ante"])
+
+
+def test_run_summary_reads_only_episodes_and_config(tmp_path):
+    shutil.copy(RUNS_DIR / "run_small" / "episodes.csv", tmp_path / "episodes.csv")
+    shutil.copy(RUNS_DIR / "run_small" / "config.json", tmp_path / "config.json")
+    summary = find.run_summary(tmp_path, "run_small")
+    full = find.run_index({"run_small": load_run(RUNS_DIR / "run_small")})
+    assert find.run_index({"run_small": summary}).equals(full)
+    (tmp_path / "episodes.csv").write_text("")  # training hasn't logged yet
+    assert find.run_summary(tmp_path, "run_small") is None
