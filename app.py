@@ -99,6 +99,9 @@ def cli_runs_dir() -> Path:
 
 
 RUNS_KEPT = 24  # runs held in memory across reruns and sessions
+# Tables longer than this show item names without icon strips: a strip is a ~20 KB
+# PNG per row, so a 30,000-episode table took several GB to build and send.
+ICON_ROWS_MAX = 1000
 
 
 # The cached Runs themselves (not copies): cache_data would unpickle every run
@@ -274,9 +277,11 @@ def table(df, keys: dict[str, str] | None = None, **kwargs) -> None:
 def icon_table(df, item_cols: list[str], keys: dict[str, str] | None = None, **kwargs) -> None:
     """``table`` with an icon strip before each item-list column in ``item_cols``
     (held jokers, consumables, ...).  The names stay next to it; without the game
-    files there are only the names."""
+    files, or with more than ``ICON_ROWS_MAX`` rows, there are only the names."""
     present = [c for c in item_cols if c in df]
-    if not sprites or not present:
+    if not sprites or not present or len(df) > ICON_ROWS_MAX:
+        if sprites and present:
+            st.caption(f"Icons are shown for up to {ICON_ROWS_MAX:,} rows: filter to see them.")
         table(df, keys, **kwargs)
         return
     df = df.copy()

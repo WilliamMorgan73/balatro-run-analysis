@@ -6,6 +6,7 @@ from conftest import DECK_COLOUR, JOKER_COLOUR, SOUL_COLOUR, TAROT_COLOUR
 from PIL import Image
 
 from balatro_analysis import catalog, picker
+from balatro_analysis import sprites as sprites_module
 from balatro_analysis.sprites import Sprites, find_balatro, game_archive
 
 # --- catalog ---------------------------------------------------------------
@@ -87,6 +88,17 @@ def test_icon_strip(fake_game):
     assert s.strip_png(["nope"]) is None
     assert s.strip_png([]) is None
     assert s.strip_uri(["j_joker"]).startswith("data:image/png;base64,")
+
+
+def test_icon_strips_cached_up_to_a_limit(fake_game, monkeypatch):
+    monkeypatch.setattr(sprites_module, "STRIPS_KEPT", 2)
+    s = Sprites(fake_game / "Balatro.exe")
+    for keys in (["j_joker"], ["c_hermit"], ["j_joker", "c_hermit"]):
+        s.strip_png(keys)
+    assert list(s._strips) == [("c_hermit",), ("j_joker", "c_hermit")]  # oldest dropped
+    s.strip_png(["c_hermit"])  # a hit keeps it
+    s.strip_png(["j_joker"])
+    assert list(s._strips) == [("c_hermit",), ("j_joker",)]
 
 
 # --- picker ----------------------------------------------------------------

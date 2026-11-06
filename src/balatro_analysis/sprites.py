@@ -14,6 +14,7 @@ the rank and suit from ``8BitDeck.png``, then the seal.  The pixel font is
 from __future__ import annotations
 
 import base64
+import collections
 import io
 import os
 import re
@@ -54,6 +55,7 @@ ENHANCER_POS = {
 SEAL_POS = {"Gold": (2, 0), "Purple": (4, 4), "Red": (5, 4), "Blue": (6, 4)}
 FONT = "resources/fonts/m6x11plus.ttf"
 STRIP_GAP = 4  # px between icons in a strip, at scale 1
+STRIPS_KEPT = 2000  # icon strips cached (about 20 KB each at scale 2)
 ARCHIVE_NAMES = ("Balatro.exe", "Balatro.love", "Balatro")
 
 STEAM_ROOTS = (
@@ -112,7 +114,11 @@ class Sprites:
         self._atlases: dict[str, Image.Image | None] = {}
         self._icons: dict[str, bytes | None] = {}
         self._images: dict[str, Image.Image | None] = {}  # decoded icons, for strips
-        self._strips: dict[tuple[str, ...], bytes | None] = {}
+        # Most recently used last; capped at STRIPS_KEPT, since every distinct hand of
+        # jokers is a strip (a 30,000-episode run has over 20,000).
+        self._strips: collections.OrderedDict[tuple[str, ...], bytes | None] = (
+            collections.OrderedDict()
+        )
 
     def _atlas(self, set_name: str) -> Image.Image | None:
         if set_name not in self._atlases:
@@ -201,8 +207,12 @@ class Sprites:
         out), or None if none has one.  For a table cell showing a whole hand of
         jokers or consumables."""
         keys = tuple(keys)
-        if keys not in self._strips:
+        if keys in self._strips:
+            self._strips.move_to_end(keys)
+        else:
             self._strips[keys] = self._render_strip(keys)
+            if len(self._strips) > STRIPS_KEPT:
+                self._strips.popitem(last=False)
         return self._strips[keys]
 
     def strip_uri(self, keys: list[str] | tuple[str, ...]) -> str | None:
