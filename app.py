@@ -74,6 +74,7 @@ from balatro_analysis import (  # noqa: E402
     export,
     find,
     hands,
+    latex,
     loader,
     memory,
     metrics,
@@ -81,6 +82,7 @@ from balatro_analysis import (  # noqa: E402
     replay,
     runcache,
     stats,
+    studies,
     theme,
 )
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
@@ -96,11 +98,32 @@ MIN_VISITS = 5  # money-curve points need at least this many shop visits
 MIN_LEGAL = 20  # preference needs an action to have been legal this often
 
 
-def cli_runs_dir() -> Path:
+def cli_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
+    # balatro-shop-rl's scripts/run_manifest.py: runs across folders, and studies
+    ap.add_argument("--manifest", type=Path, default=None)
     args, _ = ap.parse_known_args(sys.argv[1:])
-    return args.runs_dir
+    return args
+
+
+def cli_runs_dir() -> Path:
+    return cli_args().runs_dir
+
+
+def cli_manifest() -> str:
+    """The manifest given, else the runs folder's ``manifest.json`` if it has one."""
+    args = cli_args()
+    if args.manifest is not None:
+        return str(args.manifest)
+    default = args.runs_dir / studies.MANIFEST
+    return str(default) if default.is_file() else ""
+
+
+@st.cache_data(show_spinner=False)
+def cached_manifest(path: str, mtime: float) -> studies.Manifest:
+    """``studies.load_manifest``; mtime: re-read once it's regenerated."""
+    return studies.load_manifest(path)
 
 
 FILTERED_KEPT = 2  # filtered copies kept per run (each up to a full copy of it)
@@ -531,6 +554,8 @@ st.set_page_config(page_title="Balatro Run Analysis", layout="wide")
 
 if "runs_dir" not in st.session_state:
     st.session_state.runs_dir = str(cli_runs_dir())
+if "manifest_path" not in st.session_state:
+    st.session_state.manifest_path = cli_manifest()
 if "game_path" not in st.session_state:
     found = find_balatro()
     st.session_state.game_path = str(found) if found else ""
@@ -553,7 +578,14 @@ def settings(expanded: bool = False) -> None:
             help="On: names as shown in the game (for presenting). "
             "Off: exact keys like j_greedy_joker (for analysis).",
         )
-        st.text_input("Runs folder", key="runs_dir")
+        st.text_input(
+            "Run manifest",
+            key="manifest_path",
+            help="runs/manifest.json from balatro-shop-rl's scripts/run_manifest.py: runs "
+            "in several folders (runs/ and archives) and named studies. Empty: every run "
+            "under the runs folder below.",
+        )
+        st.text_input("Runs folder", key="runs_dir", help="Used when there's no manifest.")
         st.button("Browse…", on_click=browse_runs_dir, key="browse_runs")
         st.text_input("Balatro install", key="game_path", help="Folder or Balatro.exe/.love")
         st.button("Browse…", on_click=browse_game, key="browse_game")
@@ -602,15 +634,66 @@ def phase_switch(phases: list[str]) -> str:
     return phase
 
 
+NO_STUDY = "None"
+
+
+def study_picker(manifest: studies.Manifest, run_dirs: dict) -> str | None:
+    """The sidebar's Study picker: choosing a study picks its runs and compares
+    groups.  Returns the study chosen (None: none)."""
+
+    def pick() -> None:
+        chosen = st.session_state.study
+        if chosen != NO_STUDY:
+            st.session_state.picked_runs = [n for n in manifest.study_runs(chosen) if n in run_dirs]
+            st.session_state.compare_by = "Groups"
+
+    chosen = st.selectbox(
+        "Study",
+        [NO_STUDY, *manifest.studies],
+        key="study",
+        on_change=pick,
+        format_func=lambda s: manifest.studies.get(s, {}).get("title", s),
+        help="A comparison named in the manifest (balatro-shop-rl's analysis/studies.toml): "
+        "picks its groups' runs, and the Overview shows its tables, paired by seed.",
+    )
+    if chosen == NO_STUDY:
+        return None
+    for problem in manifest.study_problems(chosen):
+        st.caption(f":material/warning: {problem}")
+    return chosen
+
+
 # --- Sidebar --------------------------------------------------------------
 with st.sidebar:
     root = Path(st.session_state.runs_dir).expanduser()
-    run_paths = find_runs(root)
-    if not run_paths:
+    manifest = None
+    if mpath := st.session_state.manifest_path.strip():
+        try:
+            mfile = Path(mpath).expanduser()
+            manifest = cached_manifest(str(mfile), mfile.stat().st_mtime)
+        except (OSError, ValueError, KeyError) as e:
+            st.warning(f"Couldn't read the run manifest ({e}); listing the runs folder instead.")
+    if manifest is not None:
+        # runs named by the manifest, wherever they are; names are the run folders'
+        run_dirs = {
+            n: d for n in manifest.runs if (d := manifest.run_dir(n) / "episodes.csv").is_file()
+        }
+        run_dirs = {n: d.parent for n, d in run_dirs.items()}
+        source = str(manifest.path)
+        if missing := len(manifest.runs) - len(run_dirs):
+            st.caption(f"{missing} run(s) in the manifest not found on disk.")
+    else:
+        run_paths = find_runs(root)
+        run_dirs = {str(p.relative_to(root)) if p != root else p.name: p for p in run_paths}
+        source = str(root)
+    if not run_dirs:
         st.warning(f"No runs (folders with episodes.csv) under {root}. Set the runs folder below.")
         settings(expanded=True)
         st.stop()
-    run_dirs = {str(p.relative_to(root)) if p != root else p.name: p for p in run_paths}
+
+    def run_root(name: str) -> str:
+        """What the run's name is relative to (its own folder's parent for a manifest)."""
+        return str(run_dirs[name].parent) if manifest is not None else str(root)
 
     def run_mtime(path: Path) -> float:
         files = [path / "episodes.csv", *(path / d / "episodes.csv" for d in loader.SPLIT_DIRS)]
@@ -623,13 +706,17 @@ with st.sidebar:
     )
 
     # Every run starts selected; runs that appear later (Reload runs) are added
-    if st.session_state.get("_runs_root") != str(root):
+    if st.session_state.get("_runs_root") != source:
         st.session_state.picked_runs = list(run_dirs)
     else:
         known = st.session_state.get("_known_runs", [])
         kept = [n for n in st.session_state.get("picked_runs", []) if n in run_dirs]
         st.session_state.picked_runs = kept + [n for n in run_dirs if n not in known]
-    st.session_state._runs_root, st.session_state._known_runs = str(root), list(run_dirs)
+    st.session_state._runs_root, st.session_state._known_runs = source, list(run_dirs)
+
+    study = None
+    if manifest is not None and manifest.studies:
+        study = study_picker(manifest, run_dirs)
 
     shown_runs = find.find_runs_in(
         run_index,
@@ -723,7 +810,9 @@ with st.sidebar:
 
         path = str(run_dirs[name])
         try:
-            run = cached_run(path, str(root), run_mtime(run_dirs[name]), pkg_mtime, progress, held)
+            run = cached_run(
+                path, run_root(name), run_mtime(run_dirs[name]), pkg_mtime, progress, held
+            )
         except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
             return None
         return None if run.episodes.empty else run
@@ -1143,6 +1232,153 @@ def table_budget():
         )
 
 
+STUDY_GROUP_COLUMNS = {
+    "group": "Group",
+    "seeds": "Seeds",
+    "games": "Games",
+    "win_pct": "Win %",
+    "win_pct_sd": "Win % SD (seeds)",
+    "final_round": "Final round",
+    "ante": "Ante",
+    "ante_iqm": "IQM ante",
+    "ante_iqm_low": "IQM low",
+    "ante_iqm_high": "IQM high",
+}
+STUDY_PAIR_COLUMNS = {
+    "a": "A",
+    "b": "B",
+    "pairs": "Seed pairs",
+    "ante_diff": "Δ ante (A - B)",
+    "ante_low": "Δ ante low",
+    "ante_high": "Δ ante high",
+    "p": "p",
+    "a_better": "Seeds A ahead",
+    "win_diff": "Δ win (pts)",
+    "win_low": "Δ win low",
+    "win_high": "Δ win high",
+    "p_improvement": "P(A > B)",
+    "p_low": "P low",
+    "p_high": "P high",
+    "unpaired_seeds": "Seeds not paired",
+}
+
+
+def study_tables(study: str, spec: dict, runs: list[Run]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The study's group and pair tables over ``runs``, memoised on the first run
+    (filtered runs are kept between reruns, so this is computed once per filter)."""
+    key = f"study:{study}:" + ",".join(r.name for r in runs)
+    return stats.memo_value(
+        runs[0],
+        key,
+        lambda: (
+            studies.group_table(runs, spec.get("groups", [])),
+            studies.pair_table(runs, spec.get("pairs", [])),
+        ),
+    )
+
+
+def show_study_tables(groups: pd.DataFrame, pairs: pd.DataFrame, key: str) -> None:
+    f2, f3 = (
+        st.column_config.NumberColumn(format="%.2f"),
+        st.column_config.NumberColumn(format="%.3f"),
+    )
+    if len(groups):
+        st.dataframe(
+            groups.rename(columns=STUDY_GROUP_COLUMNS),
+            hide_index=True,
+            key=f"{key}_groups",
+            column_config={
+                c: (f3 if c.startswith("IQM") or c == "Ante" else f2)
+                for c in STUDY_GROUP_COLUMNS.values()
+                if c not in ("Group", "Seeds", "Games")
+            },
+        )
+    if len(pairs):
+        shown = (
+            pairs
+            if pairs["unpaired_seeds"].astype(bool).any()
+            else pairs.drop(columns="unpaired_seeds")
+        )
+        st.dataframe(
+            shown.rename(columns=STUDY_PAIR_COLUMNS),
+            hide_index=True,
+            key=f"{key}_pairs",
+            column_config={
+                c: (st.column_config.NumberColumn(format="%.3g") if c == "p" else f3)
+                for c in STUDY_PAIR_COLUMNS.values()
+                if c not in ("A", "B", "Seed pairs", "Seeds A ahead", "Seeds not paired")
+            },
+        )
+
+
+def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> None:
+    """The chosen study's results on the episodes shown: one row per group, then
+    each pair A - B matched by training seed; by ``split_by`` too if it has one."""
+    spec = manifest.studies[study]
+    in_study = set(spec.get("groups", []))
+    members = [r for r in runs if stats.group_of(r) in in_study]
+    st.subheader(spec.get("title", study))
+    if not members:
+        st.info("None of this study's runs are picked (or have these episodes).")
+        return
+    st.caption(
+        f"On {episodes_shown()}. Groups: mean over seeds (win % ± SD across seeds), and the "
+        "IQM of ante over seeds × games with a stratified-bootstrap 95% CI. Pairs: A - B "
+        "per training seed (same seed, same training games), Student-t 95% CI and p over "
+        "the seed pairs; P(A > B): the chance a game of A gets further than one of B, "
+        "rliable's, with a bootstrap 95% CI." + (f" {spec['note']}" if spec.get("note") else "")
+    )
+    if not test_mode:
+        st.warning(
+            "Not the test games: set **Episodes** to *Test* for the results to report.",
+            icon=":material/info:",
+        )
+    groups, pairs = study_tables(study, spec, members)
+    show_study_tables(groups, pairs, f"study_{study}")
+    tex = [
+        latex.study_groups(groups, latex.escape(spec.get("title", study)), f"{study}-groups"),
+        latex.study_pairs(
+            pairs, latex.escape(spec.get("title", study)) + ", paired by seed", f"{study}-pairs"
+        ),
+    ]
+    if col := spec.get("split_by"):
+        values = sorted({v for r in members if col in r.episodes for v in r.episodes[col]})
+        for v in values:
+            sub = [studies.where(r, col, v) for r in members]
+            sub = [r for r in sub if len(r.episodes)]
+            if not sub:
+                continue
+            with st.expander(
+                f"{names.column(col)}: {names.of(col)(v) if col in ('deck', 'stake') else v}"
+            ):
+                g, p = study_tables(f"{study}:{col}={v}", spec, sub)
+                show_study_tables(g, p, f"study_{study}_{v}")
+                tex.append(
+                    latex.study_pairs(
+                        p,
+                        latex.escape(f"{spec.get('title', study)}, {col} {v}"),
+                        f"{study}-pairs-{v}",
+                    )
+                )
+    c1, c2 = st.columns(2)
+    c1.download_button(
+        "Study tables (CSV)",
+        data=groups.to_csv(index=False) + "\n" + pairs.to_csv(index=False),
+        file_name=f"study_{study}.csv",
+        mime="text/csv",
+        key=f"dl_study_csv_{study}",
+        on_click="ignore",
+    )
+    c2.download_button(
+        "Study tables (LaTeX)",
+        data="\n".join(tex),
+        file_name=f"study_{study}.tex",
+        mime="text/x-tex",
+        key=f"dl_study_tex_{study}",
+        on_click="ignore",
+    )
+
+
 # --- Overview -------------------------------------------------------------
 with tabs[0], table_budget():
     if tabs[0].open:
@@ -1160,6 +1396,8 @@ with tabs[0], table_budget():
                 "so the paired comparison below matches them game by game. For learning "
                 "curves: with few games per round, rank runs on **Test** instead."
             )
+        if study is not None:
+            study_section(manifest, study, runs)
         group_map = stats.groups(runs)
         by_group = (
             len(group_map) < len(runs)

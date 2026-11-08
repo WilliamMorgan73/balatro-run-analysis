@@ -379,3 +379,44 @@ def tables(runs: list[Run], target: float = 0.25) -> dict[str, str]:
         out["group_improvement"] = _improvement_table(runs, stats.group_of(runs[0]), by_group=True)
         out["group_power"] = group_power(runs, target)
     return {k: v for k, v in out.items() if v}
+
+
+def study_groups(groups: pd.DataFrame, caption: str, label: str) -> str:
+    """A study's ``studies.group_table`` as LaTeX."""
+    rows = [
+        [
+            escape(r.group),
+            str(r.seeds),
+            f"{num(r.win_pct, 1)} $\\pm$ {num(r.win_pct_sd, 1)}",
+            num(r.final_round),
+            num(r.ante),
+            with_ci(r.ante_iqm, r.ante_iqm_low, r.ante_iqm_high),
+        ]
+        for r in groups.itertuples()
+    ]
+    headers = ["Group", "Seeds", "Win \\%", "Final round", "Ante", "IQM ante [95\\% CI]"]
+    return table(rows, headers, caption, label, "lrrrrr")
+
+
+def study_pairs(pairs: pd.DataFrame, caption: str, label: str) -> str:
+    """A study's ``studies.pair_table`` as LaTeX: A - B paired by seed."""
+    rows = [
+        [
+            f"{escape(r.a)} $-$ {escape(r.b)}",
+            with_ci(r.ante_diff, r.ante_low, r.ante_high, lambda x: f"{x:+.3f}"),
+            pval(r.p),
+            r.a_better,
+            with_ci(r.win_diff, r.win_low, r.win_high, lambda x: f"{x:+.1f}"),
+            with_ci(r.p_improvement, r.p_low, r.p_high, lambda x: f"{x:.3f}"),
+        ]
+        for r in pairs.itertuples()
+    ]
+    headers = [
+        "A $-$ B",
+        "Ante [95\\% CI]",
+        "$p$",
+        "Seeds A ahead",
+        "Win pts [95\\% CI]",
+        "P(A $>$ B) [95\\% CI]",
+    ]
+    return table(rows, headers, caption, label, "lrrrrr")

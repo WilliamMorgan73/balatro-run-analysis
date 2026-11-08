@@ -25,6 +25,27 @@ mean ante with its CI, win rate, best ante, most played hand (eval hand logs), a
 that open the run's best and worst episode in the Episode explorer. The six best runs are
 shown; the rest fold into an expander.
 
+### Runs from a manifest, and studies
+
+If the runs folder has a `manifest.json` (written by balatro-shop-rl's
+`uv run python scripts/run_manifest.py`), or one is given with `--manifest PATH` or under
+**Settings**, the runs come from it rather than a scan of the folder: every run it names,
+wherever it is (`runs/` and archive folders), so one group can span both. Regenerate it after
+syncing runs to pick up new ones.
+
+Its **studies** (from balatro-shop-rl's `analysis/studies.toml`) appear in a **Study** picker in
+the sidebar. Choosing one picks its groups' runs, lists the manifest's problems for it (missing
+seeds, runs without a test set, a group spread over several commits), and adds its tables to
+the top of the Overview, on the episodes shown (the test games by default):
+
+- per group: seeds, win % ± SD across seeds, final round, mean ante, and IQM ante with a
+  stratified-bootstrap 95% CI;
+- per pair A − B: the difference in ante and in win rate matched by training seed (same seed,
+  same training games, so game luck cancels), with a Student-t 95% CI, p and the seeds A is
+  ahead in, and the probability of improvement with its CI;
+- the same per value of the study's `split_by` column (e.g. per deck), in expanders;
+- **Study tables** buttons for CSV and LaTeX (booktabs).
+
 Picking a run reads only its `episodes.csv` files (training, eval and test) and config.
 Each JSONL log (`steps`, `rounds`, `shops`, `hands`, `decks`, `offers`) is read the first
 time a view needs it and kept, so the Overview on the test games reads none of them and
