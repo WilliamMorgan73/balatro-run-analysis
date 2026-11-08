@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from balatro_analysis import catalog
-from balatro_analysis.loader import Run, memo
+from balatro_analysis.loader import TABLES, UNREAD, Run, SubsetReader, memo
 
 BUY_ACTIONS = ("buy_card_0", "buy_card_1", "buy_pack_0", "buy_pack_1", "buy_voucher")
 SELL_JOKER_PREFIX = "sell_joker_"
@@ -45,25 +45,17 @@ def filter_episodes(
     if keep.all() and filtered_eval is run.eval and filtered_test is run.test:
         return run  # nothing filtered out: no copy, and what it has memoised is reused
     episodes = set(e.loc[keep, "episode"])
-
-    def cut(df: pd.DataFrame | None) -> pd.DataFrame | None:
-        if df is None:
-            return None
-        return df[df["episode"].isin(episodes)].reset_index(drop=True)
-
-    return Run(
+    out = Run(
         name=run.name,
         path=run.path,
-        episodes=cut(run.episodes),
+        episodes=e[keep].reset_index(drop=True),
         config=run.config,
-        steps=cut(run.steps),
-        rounds=cut(run.rounds),
-        shops=cut(run.shops),
-        hands=cut(run.hands),
-        decks=cut(run.decks),
+        **dict.fromkeys(TABLES, UNREAD),  # cut from run's when first asked for
         eval=filtered_eval,
         test=filtered_test,
     )
+    out._reader = SubsetReader(run, episodes)
+    return out
 
 
 def _concat(frames: list[pd.DataFrame]) -> pd.DataFrame:

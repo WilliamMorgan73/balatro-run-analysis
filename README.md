@@ -15,7 +15,7 @@ uv run streamlit run app.py -- --runs-dir /path/to/runs       # or anywhere else
 
 The sidebar holds only what you are looking at: **Runs** (pick any number to overlay; *Find
 runs* searches and filters them), **Reload runs** to pick up new runs and new episodes, the
-*Training* / *Evaluation* switch, and **Filter** (deck, stake, episodes or eval round, rolling
+*Test* / *Evaluation* / *Training* switch, and **Filter** (deck, stake, episodes or eval round, rolling
 window), with a one-line summary of the filter above it. **Settings** holds the things set
 once: in-game names, the runs folder and the Balatro install (**Browse…** opens your
 desktop's folder dialog: kdialog, zenity, or Tk as a fallback).
@@ -25,14 +25,23 @@ mean ante with its CI, win rate, best ante, most played hand (eval hand logs), a
 that open the run's best and worst episode in the Episode explorer. The six best runs are
 shown; the rest fold into an expander.
 
-Loaded runs are cached in `~/.cache/balatro-analysis` (or `$XDG_CACHE_HOME`), a few
-hundred MB for a long run, so later starts skip parsing the logs. A run still training
-is brought up to date by reading only the lines logged since it was last loaded (a
-second or so instead of a full parse); a run is parsed again whole only when its
-`config.json` or the loading code (`loader.py`, `runcache.py`; not comments or
-docstrings) changes, or a log was rewritten rather than appended to. Editing the rest
-of the package keeps loaded runs in memory. Set `BALATRO_ANALYSIS_CACHE` to use another
-folder, or to `0` to turn the cache off. Deleting the folder is always safe.
+Picking a run reads only its `episodes.csv` files (training, eval and test) and config.
+Each JSONL log (`steps`, `rounds`, `shops`, `hands`, `decks`, `offers`) is read the first
+time a view needs it and kept, so the Overview on the test games reads none of them and
+picking every run is cheap; the training `steps.jsonl` (hundreds of MB) is only read for
+the tabs that show shop decisions. Before a log is read, the tables of runs not shown are
+dropped if needed to stay within the memory set aside for runs; a view that still wouldn't
+fit says so instead of loading it.
+
+Runs, and each log once parsed, are cached in `~/.cache/balatro-analysis` (or
+`$XDG_CACHE_HOME`), so later starts skip parsing (a training `steps.jsonl`: ~8 s parsed,
+~0.3 s cached). A run still training is brought up to date by reading only the lines
+logged since it was last loaded (a second or so instead of a full parse); a log is parsed
+again whole only when it, the run's `config.json` or the loading code (`loader.py`,
+`runcache.py`; not comments or docstrings) changes, or a log was rewritten rather than
+appended to. Editing the rest of the package keeps loaded runs in memory. Set
+`BALATRO_ANALYSIS_CACHE` to use another folder, or to `0` to turn the cache off. Deleting
+the folder is always safe.
 
 ## Producing runs
 
@@ -133,9 +142,22 @@ Runs made with `--eval-every` (`log_version` 4) also have an `eval/` folder in t
 greedy episodes on the fixed seeds `EVAL_0..K-1`, played before training and after every N
 training episodes, with `eval_round` and `train_episodes` columns. Every run with the same eval
 settings plays the same eval games. `eval/` is loaded with its run (it isn't listed as a run of
-its own). The sidebar **Episodes** switch (*Training* / *Evaluation*) swaps every tab over to the
-eval episodes, and an **Eval round** picker (under Filter) defaults to the last round, which
-scores the final policy. Paired comparisons then match the runs game by game.
+its own).
+
+Runs from `log_version` 14 also end with a `test/` folder in the same format: the final policy
+on one fixed set of games (`TEST_0..`, 500 by default), the same for every run and never used
+in training. It is loaded with its run too.
+
+The sidebar **Episodes** switch swaps every tab over to one kind of episode:
+
+- *Test* (the default when runs have it): the results to report. Paired comparisons match runs
+  game by game.
+- *Evaluation*: the eval rounds, for learning curves; an **Eval round** picker (under Filter)
+  defaults to the last round. Too few games per round to rank runs on.
+- *Training*: the episodes trained on, with exploration, for diagnostics.
+
+The Overview's eval learning curve is drawn from the eval episodes whichever is chosen. The run
+list ranks runs on their test games where they have them (*Scored on* says which).
 
 From `log_version` 7, eval episodes also log every play and discard (`eval/hands.jsonl`) and the
 deck at each blind (`eval/decks.jsonl`), for the Hands tab and the explorer's Replay. Training

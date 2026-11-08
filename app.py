@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import functools
 import html
 import importlib
@@ -83,7 +84,7 @@ from balatro_analysis import (  # noqa: E402
     theme,
 )
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
-from balatro_analysis.loader import Run, find_runs, log_bytes  # noqa: E402
+from balatro_analysis.loader import Run, TableBudgetError, episodes_bytes, find_runs  # noqa: E402
 from balatro_analysis.names import Names, split_items  # noqa: E402
 from balatro_analysis.picker import PickerUnavailable, pick_directory  # noqa: E402
 from balatro_analysis.sprites import Sprites, find_balatro, game_archive  # noqa: E402
@@ -128,14 +129,27 @@ def run_locks() -> tuple[threading.Lock, dict[tuple, threading.Lock]]:
 
 @st.cache_resource
 def run_sizes() -> dict[str, int]:
-    """Each run's memory (by path) when last loaded, to judge before loading it
-    again whether it fits.  Runs never loaded are guessed from their logs."""
+    """Each run's memory (by path) when last loaded, without its tables, to judge
+    before loading it again whether it fits.  Runs never loaded are guessed from
+    their episodes.csv files."""
     return {}
 
 
+@st.cache_resource
+def shown_keys() -> set:
+    """Store keys of the runs the latest rerun shows: their tables are kept when
+    making room for another table, so a view over several runs doesn't thrash."""
+    return set()
+
+
 def run_size_guess(path: str) -> int:
-    """Memory the run at ``path`` will take once loaded."""
-    return run_sizes().get(path) or memory.estimate(log_bytes(path))
+    """Memory the run at ``path`` will take once loaded (tables are read later)."""
+    return run_sizes().get(path) or memory.estimate(episodes_bytes(path))
+
+
+def held_size(entry: tuple) -> int:
+    """Memory a stored run takes now: as loaded, plus the tables read since."""
+    return entry[2] + memory.estimate(entry[0].read_bytes())
 
 
 def _sub_runs(run: Run) -> list[Run]:
@@ -159,11 +173,38 @@ def _make_room(store: collections.OrderedDict, budget: int | None, keep: set) ->
     never one in ``keep`` (the runs this rerun shows).  Guarded by the caller."""
     if budget is None:
         return
-    used = sum(v[2] for v in store.values())
+    used = sum(held_size(v) for v in store.values())
     for k in [k for k in store if k not in keep]:
         if used <= budget:
             break
-        used -= store.pop(k)[2]
+        used -= held_size(store.pop(k))
+
+
+def make_room_for_table(run: Run, table: str, nbytes: int) -> None:
+    """``loader.table_read_hook``: before a table is read, free what it needs from
+    the memory set aside for runs: first the tables of runs not shown, then those
+    runs.  Refuses (``TableBudgetError``) if the runs shown need more than that."""
+    budget = memory.run_budget()
+    if budget is None:
+        return
+    need = memory.estimate(nbytes)
+    store = run_store()
+    guard, _ = run_locks()
+    with guard:
+        used = sum(held_size(v) for v in store.values())
+        keep = shown_keys()
+        for k, v in list(store.items()):
+            if used + need <= budget:
+                return
+            if k not in keep and v[0].read_bytes():
+                used -= memory.estimate(v[0].unload())
+        _make_room(store, budget - need, keep)
+        used = sum(held_size(v) for v in store.values())
+    if used + need > budget:
+        raise TableBudgetError(run.name, table, need, budget)
+
+
+loader.table_read_hook = make_room_for_table
 
 
 def cached_run(
@@ -205,7 +246,7 @@ def cached_run(
         after = memory.process_rss()
         # what reading it took, unless that is less than its logs suggest (memory
         # freed meanwhile, or another session loading at the same time)
-        size = max(memory.estimate(log_bytes(path)), (after or 0) - (before or 0))
+        size = max(memory.estimate(episodes_bytes(path)), (after or 0) - (before or 0))
         if older:
             size = max(size, run_sizes().get(path, 0))  # extended in place: as before
         with guard:  # stored and unlocked together, so no session loads it twice
@@ -664,7 +705,7 @@ with st.sidebar:
     # A progress bar over the picked runs' log bytes, only shown once a run is
     # actually read (from disk or the disk cache): runs already in memory never report.
     load_slot = st.empty()
-    run_bytes = {n: max(log_bytes(run_dirs[n]), 1) for n in picked}
+    run_bytes = {n: max(episodes_bytes(run_dirs[n]), 1) for n in picked}
     total_bytes = sum(run_bytes.values())
     bytes_before = 0
     held: set = set()  # store keys of the runs this rerun shows: kept while loading the rest
@@ -700,6 +741,9 @@ with st.sidebar:
             used += run_sizes().get(str(run_dirs[n]), size)
         bytes_before += run_bytes[n]
     load_slot.empty()
+    keys = shown_keys()
+    keys.clear()
+    keys.update(held)
 
     runs = [r for r in loaded.values() if r is not None]
     not_ready = [n for n, r in loaded.items() if r is None]
@@ -797,8 +841,9 @@ runs = [filtered(r, *ep_range, eval_rounds) for r in runs]
 eval_runs = [filtered(r.eval, 0, float("inf")) for r in train_runs if r.eval is not None]
 run_names = [r.name for r in runs]
 by_name = {r.name: r for r in runs}
-no_steps = any(r.steps is None for r in runs)
-no_rounds = any(r.rounds is None for r in runs)
+# whether runs have these logs, without reading them (tables are read when a view needs them)
+no_steps = any(not r.has("steps") for r in runs)
+no_rounds = any(not r.has("rounds") for r in runs)
 
 EPISODE_FILTERS = ("ep_decks", "ep_stakes", "ep_antes", "ep_outcome", "ep_jokers")
 TOP_JOKERS_DEFAULT = 15
@@ -1082,8 +1127,24 @@ def power_section(by_group: bool, baseline: str | None) -> None:
     table(pw, column_config={names.column(c): num for c in ("sd", "mde")})
 
 
+@contextlib.contextmanager
+def table_budget():
+    """Show a warning, not a traceback, when a tab needs more logs than fit in the
+    memory set aside for runs (``make_room_for_table``)."""
+    try:
+        yield
+    except TableBudgetError as e:
+        st.warning(
+            f"Not enough memory for this view: reading {e.table} for {e.run} (about "
+            f"{e.needed / 1e9:,.1f} GB) would go past the {e.budget / 1e9:,.1f} GB set aside "
+            f"for runs, with the logs of the other runs shown. Pick fewer runs, give the "
+            f"dashboard more memory (Slurm `--mem`), or set `{memory.ENV}` (GB).",
+            icon=":material/memory:",
+        )
+
+
 # --- Overview -------------------------------------------------------------
-with tabs[0]:
+with tabs[0], table_budget():
     if tabs[0].open:
         run_sheets()
         if test_mode:
@@ -1273,7 +1334,7 @@ with tabs[0]:
                 st.json(r.config or {"note": "no config.json"}, expanded=False)
 
 # --- Decks ----------------------------------------------------------------
-with tabs[1]:
+with tabs[1], table_budget():
     if tabs[1].open:
         deck_table = metrics.by_deck(runs)
         if need(deck_table, "episodes for this selection"):
@@ -1298,7 +1359,7 @@ with tabs[1]:
             )
 
 # --- Actions --------------------------------------------------------------
-with tabs[2]:
+with tabs[2], table_budget():
     if tabs[2].open:
         summary = actions.visit_summary(runs)
         if len(summary):
@@ -1526,7 +1587,7 @@ with tabs[2]:
                     )
 
 # --- Economy --------------------------------------------------------------
-with tabs[3]:
+with tabs[3], table_budget():
     if tabs[3].open:
         kpi = economy.kpis(runs)
         if len(kpi):
@@ -1814,7 +1875,7 @@ with tabs[3]:
                         )
 
 # --- Jokers ---------------------------------------------------------------
-with tabs[4]:
+with tabs[4], table_budget():
     if tabs[4].open:
         top = st.slider("Top N jokers", 5, 40, TOP_JOKERS_DEFAULT)
         run_name = st.selectbox("Run", run_names, key="jokers_run")
@@ -1868,7 +1929,7 @@ with tabs[4]:
             )
 
 # --- Joker collection -----------------------------------------------------
-with tabs[5]:
+with tabs[5], table_budget():
     if tabs[5].open:
         game_text = cached_game_text(str(archive), pkg_mtime) if archive else None
         cards = joker_cards()
@@ -1895,7 +1956,7 @@ with tabs[5]:
             st.info("No jokers match.")
 
 # --- Rounds ---------------------------------------------------------------
-with tabs[6]:
+with tabs[6], table_budget():
     if tabs[6].open:
         st.subheader("Boss blinds")
         bosses = metrics.boss_stats(runs)
@@ -1941,7 +2002,7 @@ def hand_log_missing(run_list: list[Run]) -> bool:
     return True
 
 
-with tabs[7]:
+with tabs[7], table_budget():
     if tabs[7].open and not hand_log_missing(runs):
         if missing := [r.name for r in runs if not hands.has_hands(r)]:
             st.caption("No hand log, not shown: " + ", ".join(missing))
@@ -2010,7 +2071,7 @@ def card_uri(card) -> str | None:
     return sprites.card_uri(card) if sprites else None
 
 
-with tabs[8]:
+with tabs[8], table_budget():
     if not tabs[8].open:
         for key in ("run", "episode"):  # the link belongs to the explorer
             st.query_params.pop(key, None)

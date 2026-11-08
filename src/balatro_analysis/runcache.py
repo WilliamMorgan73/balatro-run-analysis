@@ -1,10 +1,15 @@
 """An on-disk cache of loaded runs, so the dashboard starts without re-parsing
 every run's JSONL logs (seconds per run) when nothing has changed.
 
-Each run is pickled to one file in the cache folder with a fingerprint of its
+A run is cached in two layers.  The run itself (its episodes, config and eval and
+test runs, no tables) is pickled to one small file with a fingerprint of its
 source files (size and mtime), of the loading code (``code_version``: edits to
 comments and docstrings don't count) and of the pandas and pyarrow versions; any
 mismatch, or a cache that can't be read, parses the run again and rewrites it.
+Each JSONL log is read only when a view first asks for its table
+(``loader.TableReader``), and the parsed table is pickled to a file of its own with
+that log's fingerprint (``CachedTableReader``), so the next session reads it back
+in a fraction of the time.
 Whenever a run is written, cached files not used for ``STALE_DAYS`` (deleted or
 renamed runs, old fingerprints) are removed.
 
@@ -23,14 +28,27 @@ import ast
 import hashlib
 import os
 import pickle
+import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
 
 from balatro_analysis import loader
-from balatro_analysis.loader import LOG_FILES, SPLIT_DIRS, Progress, Run, extend_run, load_run
+from balatro_analysis.loader import (
+    LOG_FILES,
+    SPLIT_DIRS,
+    TABLES,
+    UNREAD,
+    Progress,
+    Run,
+    Source,
+    TableReader,
+    extend_run,
+    load_run,
+)
 
 ENV = "BALATRO_ANALYSIS_CACHE"
 STALE_DAYS = 30  # cached runs not read or written for this long are deleted
@@ -156,20 +174,83 @@ def load_run_cached(
     if run is None:
         run = load_run(path, root, progress)
     run._fingerprint = expected
+    _attach_readers(run, folder)
     if file is None:
         return run
     if progress is not None:
         progress("saving to cache", 1.0)
-    tmp = file.with_suffix(f".{os.getpid()}.tmp")
-    try:
-        folder.mkdir(parents=True, exist_ok=True)
-        with tmp.open("wb") as fh:
-            pickle.dump({"fingerprint": expected, "run": run}, fh, protocol=5)
-        os.replace(tmp, file)
-    except OSError:  # read-only or full disk: run without the cache
-        tmp.unlink(missing_ok=True)
+    _dump(file, {"fingerprint": expected, "run": skeleton(run)})
     remove_stale(folder)
     return run
+
+
+def skeleton(run: Run) -> Run:
+    """``run`` without the tables it has read (left to its reader) or anything
+    memoised: what the run-level cache holds."""
+    out = Run(run.name, run.path, run.episodes, run.config, **dict.fromkeys(TABLES, UNREAD))
+    out._reader, out._fingerprint = run._reader, run._fingerprint
+    for split in SPLIT_DIRS:
+        sub = getattr(run, split)
+        setattr(out, split, skeleton(sub) if sub is not None else None)
+    return out
+
+
+def _attach_readers(run: Run, folder: Path | None) -> None:
+    """Read ``run``'s tables (and its eval and test runs') through the table cache
+    in ``folder`` (None: straight from the logs)."""
+    for r in (run, *run.splits()):
+        if isinstance(r._reader, TableReader):
+            r._reader = (
+                CachedTableReader(r.path, r.config, folder)
+                if folder is not None
+                else TableReader(r.path, r.config)
+            )
+
+
+def _dump(file: Path, obj: object) -> None:
+    """Pickle ``obj`` to ``file`` atomically; a read-only or full disk is skipped."""
+    tmp = file.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        with tmp.open("wb") as fh:
+            pickle.dump(obj, fh, protocol=5)
+        os.replace(tmp, file)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+
+
+@dataclass(frozen=True)
+class CachedTableReader(TableReader):
+    """``TableReader`` through a pickle per log in ``folder``, reused while the log's
+    size and mtime, the loading code and the library versions are unchanged."""
+
+    folder: Path | None = None
+
+    def at(self, path: Path, config: dict) -> CachedTableReader:
+        return CachedTableReader(path, config, self.folder)
+
+    def _fingerprint(self, file: Path) -> tuple:
+        st = file.stat()
+        return (code_version(), pd.__version__, pa.__version__, st.st_size, st.st_mtime_ns)
+
+    def read(self, table: str) -> tuple[pd.DataFrame | None, Source | None]:
+        file = self.file(table)
+        if self.folder is None or not file.is_file():
+            return super().read(table)
+        key = hashlib.sha1(str(file.resolve()).encode()).hexdigest()
+        cached = self.folder / f"{key}.table.pkl"
+        expected = self._fingerprint(file)
+        try:
+            with cached.open("rb") as fh:
+                got = pickle.load(fh)
+            if got["fingerprint"] == expected:
+                _touch(cached)
+                return got["frame"], got["source"]
+        except Exception:  # missing, stale format or corrupt: read the log
+            pass
+        frame, source = super().read(table)
+        _dump(cached, {"fingerprint": expected, "frame": frame, "source": source})
+        return frame, source
 
 
 def _touch(file: Path) -> None:
