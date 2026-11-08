@@ -545,7 +545,7 @@ def _eval_app(eval_runs_dir: Path, tab: str, game: Path | None = None) -> AppTes
 def test_hands_tab_needs_evaluation(eval_runs_dir):
     at = _run(eval_runs_dir, tab="Hands")
     assert not at.exception
-    assert any("Switch **Episodes** to **Evaluation**" in i.value for i in at.info)
+    assert any("**Test** or **Evaluation**" in i.value for i in at.info)
     assert not at.get("plotly_chart")
 
 
@@ -574,7 +574,7 @@ def test_replay_plays_a_blind(eval_runs_dir, fake_game):
 
 def test_replay_without_hand_log_says_why(runs_dir):
     at = _run(runs_dir, tab="Episode explorer")
-    assert any("only recorded for evaluation" in i.value for i in at.info)
+    assert any("only recorded for test and evaluation" in i.value for i in at.info)
 
 
 def test_shop_view(runs_dir, fake_game):

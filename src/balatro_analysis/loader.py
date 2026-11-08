@@ -10,6 +10,9 @@ A run is a directory containing ``episodes.csv``, and optionally
 Runs made with ``--eval-every`` also have an ``eval/`` folder in the same format
 (greedy episodes on fixed seeds, with ``eval_round`` and ``train_episodes``
 columns).  It is loaded as ``Run.eval`` rather than listed as a run of its own.
+Runs from balatro-shop-rl's log_version 14 also end with a ``test/`` folder: one fixed
+set of games (``TEST_0``..) played once by the final policy, the same for every run.
+It is loaded as ``Run.test``: the results to report, where eval is the learning curve.
 From ``log_version`` 7, ``eval/`` also has ``hands.jsonl`` (every play and
 discard) and ``decks.jsonl`` (the deck at the start of each blind).
 
@@ -47,6 +50,7 @@ class Run:
     hands: pd.DataFrame | None = None  # eval/ only, log_version 7
     decks: pd.DataFrame | None = None  # eval/ only, log_version 7
     eval: Run | None = None  # greedy episodes on the fixed eval seeds, if logged
+    test: Run | None = None  # the final policy on the fixed test games, if logged
     # frames derived from this run's tables (see ``memo``), so the tables must not
     # change once read; a filtered or replace()d run starts empty
     _memo: dict = field(default_factory=dict, init=False, repr=False, compare=False)
@@ -66,6 +70,9 @@ def memo(run: Run, key: str, build: Callable[[], pd.DataFrame]) -> pd.DataFrame:
 
 
 EVAL_DIR = "eval"
+TEST_DIR = "test"
+# folders inside a run holding its other episodes, in the run's format: Run attributes
+SPLIT_DIRS = (EVAL_DIR, TEST_DIR)
 # what a run (and its eval/ folder) is read from, in the order it is read
 LOG_FILES = (
     "episodes.csv",
@@ -84,9 +91,9 @@ TABLES = ("steps", "rounds", "shops", "hands", "decks")  # the JSONL logs, as Ru
 Progress = Callable[[str, float], None]
 
 
-def is_eval_dir(path: Path) -> bool:
-    """An ``eval/`` folder inside a run (it belongs to that run)."""
-    return path.name == EVAL_DIR and (path.parent / "episodes.csv").is_file()
+def is_split_dir(path: Path) -> bool:
+    """An ``eval/`` or ``test/`` folder inside a run (it belongs to that run)."""
+    return path.name in SPLIT_DIRS and (path.parent / "episodes.csv").is_file()
 
 
 def find_runs(root: str | Path) -> list[Path]:
@@ -97,7 +104,7 @@ def find_runs(root: str | Path) -> list[Path]:
     return sorted(
         p.parent
         for p in root.rglob("episodes.csv")
-        if p.parent == root or not is_eval_dir(p.parent)
+        if p.parent == root or not is_split_dir(p.parent)
     )
 
 
@@ -285,9 +292,10 @@ def mask_actions(mask: int) -> list[int]:
 
 
 def log_files(path: str | Path) -> list[Path]:
-    """The log files a run at ``path`` is read from (its own and its eval/ folder's)."""
+    """The log files a run at ``path`` is read from (its own, its eval/ and test/ folders')."""
     path = Path(path)
-    return [d / n for d in (path, path / EVAL_DIR) for n in LOG_FILES if (d / n).is_file()]
+    dirs = (path, *(path / d for d in SPLIT_DIRS))
+    return [d / n for d in dirs for n in LOG_FILES if (d / n).is_file()]
 
 
 def log_bytes(path: str | Path) -> int:
@@ -329,11 +337,12 @@ def load_run(
     if name == ".":
         name = path.name
     config_path = path / "config.json"
-    if not config_path.is_file() and is_eval_dir(path):
+    if not config_path.is_file() and is_split_dir(path):
         config_path = path.parent / "config.json"  # loaded on its own: use the run's config
     config = json.loads(config_path.read_text()) if config_path.is_file() else {}
     run = _load_tables(path, name, config, report)
-    run.eval = _load_eval(run, None, report)
+    for split in SPLIT_DIRS:
+        setattr(run, split, _load_split(run, split, None, report))
     return run
 
 
@@ -350,16 +359,20 @@ def extend_run(run: Run, progress: Progress | None = None) -> Run:
             progress(f"new data: {file.relative_to(run.path)}", 0.0)
 
     out = _load_tables(run.path, run.name, run.config, report, previous=run)
-    out.eval = _load_eval(out, run.eval, report)
+    for split in SPLIT_DIRS:
+        setattr(out, split, _load_split(out, split, getattr(run, split), report))
     return out
 
 
-def _load_eval(run: Run, previous: Run | None, report: Callable[[Path], None]) -> Run | None:
-    path = run.path / EVAL_DIR
+def _load_split(
+    run: Run, split: str, previous: Run | None, report: Callable[[Path], None]
+) -> Run | None:
+    """The run's ``eval/`` or ``test/`` episodes, or None if it has none (yet)."""
+    path = run.path / split
     if not (path / "episodes.csv").is_file():
         return None
     out = _load_tables(path, run.name, run.config, report, previous=previous)
-    return None if out.episodes.empty else out  # first eval round still being played
+    return None if out.episodes.empty else out  # first eval round / test still being played
 
 
 def _load_tables(

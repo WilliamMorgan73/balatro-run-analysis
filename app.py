@@ -73,6 +73,7 @@ from balatro_analysis import (  # noqa: E402
     export,
     find,
     hands,
+    loader,
     memory,
     metrics,
     plots,
@@ -138,7 +139,7 @@ def run_size_guess(path: str) -> int:
 
 
 def _sub_runs(run: Run) -> list[Run]:
-    return [r for r in (run, run.eval) if r is not None]
+    return [r for r in (run, run.eval, run.test) if r is not None]
 
 
 def _served(store: collections.OrderedDict, key: tuple, pkg_mtime: float) -> Run:
@@ -523,6 +524,43 @@ def settings(expanded: bool = False) -> None:
             st.caption("Balatro not found: showing names only.")
 
 
+# The sidebar's Episodes switch: which of a run's episodes every tab shows (None:
+# the training episodes themselves), in the order offered; Test first, the default
+PHASE_SPLITS = {"Test": loader.TEST_DIR, "Evaluation": loader.EVAL_DIR, "Training": None}
+PHASE_CAPTIONS = {
+    "Test": "Results: the final policy on the fixed test games.",
+    "Evaluation": "Learning: greedy eval rounds during training. Not for ranking runs.",
+    "Training": "Diagnostics: the episodes trained on, with exploration.",
+}
+
+
+def episodes_shown() -> str:
+    """Which episodes the tabs show, for captions and the export's README."""
+    if test_mode:
+        return "the test games"
+    if eval_mode:
+        return f"eval round {eval_rounds[0]}" if eval_rounds else "every eval round"
+    return f"episodes {ep_range[0]} to {ep_range[1]}"
+
+
+def phase_switch(phases: list[str]) -> str:
+    """The sidebar's Episodes switch over ``phases``, with a line on what it's for."""
+    phase = st.segmented_control(
+        "Episodes",
+        phases,
+        required=True,
+        key="phase",
+        help="**Test**: the final policy on one fixed set of games (500 for balatro-shop-rl, "
+        "TEST_0..), the same for every run and never used during training. Report results "
+        "from these. **Evaluation**: greedy episodes on the fixed eval seeds every "
+        "--eval-every episodes, for learning curves; too few games per round to rank runs "
+        "on. **Training**: the episodes trained on, with exploration, for diagnostics. "
+        "Test and eval runs play the same games, so comparisons pair game by game.",
+    )
+    st.caption(PHASE_CAPTIONS[phase])
+    return phase
+
+
 # --- Sidebar --------------------------------------------------------------
 with st.sidebar:
     root = Path(st.session_state.runs_dir).expanduser()
@@ -534,7 +572,7 @@ with st.sidebar:
     run_dirs = {str(p.relative_to(root)) if p != root else p.name: p for p in run_paths}
 
     def run_mtime(path: Path) -> float:
-        files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
+        files = [path / "episodes.csv", *(path / d / "episodes.csv" for d in loader.SPLIT_DIRS)]
         return max(f.stat().st_mtime for f in files if f.is_file())
 
     # Listing runs reads only their episodes.csv and config.json: only the runs
@@ -598,17 +636,23 @@ with st.sidebar:
                 )
         st.dataframe(
             run_index.set_index("run")
-            .loc[shown_runs, ["mean_ante", "episodes", "group"]]
+            .loc[shown_runs, ["mean_ante", "scored_on", "episodes", "group"]]
             .rename(columns=names.column),
             column_config={names.column("mean_ante"): st.column_config.NumberColumn(format="%.2f")},
             height=min(36 * (len(shown_runs) + 1) + 2, 300),
+        )
+        st.caption(
+            "Mean ante and win rate are on the 500 test games where a run has them "
+            "(*Scored on* test), otherwise on its training episodes, which aren't comparable."
         )
         b1, b2, b3 = st.columns(3)
         b1.button(
             "Best per group",
             on_click=pick_runs,
             args=(find.best_per_group(run_index[run_index["run"].isin(shown_runs)]),),
-            help="The highest mean-ante run of each group shown (the best run if none are grouped)",
+            help="The highest mean-ante run of each group shown (the best run if none are "
+            "grouped). A diagnostic: picking the best seed by its score selects for luck, so "
+            "report groups, not the best run.",
         )
         b2.button("All shown", on_click=pick_runs, args=(shown_runs,))
         b3.button("Clear", on_click=pick_runs, args=([],))
@@ -678,25 +722,21 @@ with st.sidebar:
         st.stop()
     train_runs = runs
 
-    # Eval episodes (greedy, fixed seeds) replace the training episodes in every tab
-    with_eval = [r for r in runs if r.eval is not None]
-    eval_mode = bool(with_eval) and (
-        st.segmented_control(
-            "Episodes",
-            ["Training", "Evaluation"],
-            default="Training",
-            required=True,
-            key="phase",
-            help="Evaluation: greedy episodes on the fixed eval seeds (--eval-every). "
-            "Every run plays the same eval games, so comparisons pair game by game. "
-            "Hand-by-hand replays are only recorded for these.",
-        )
-        == "Evaluation"
-    )
-    if eval_mode:
-        if missing := [r.name for r in runs if r.eval is None]:
-            st.caption("No eval episodes, not shown: " + ", ".join(missing))
-        runs = [r.eval for r in with_eval]
+    # Test or eval episodes (greedy, fixed games) replace the training episodes in
+    # every tab.  Test is the default: it's what results are reported on.
+    with_split = {s: [r for r in runs if getattr(r, s) is not None] for s in loader.SPLIT_DIRS}
+    phases = [p for p, s in PHASE_SPLITS.items() if s is None or with_split[s]]
+    if st.session_state.get("phase") not in phases:  # Test if any run has it, else Training
+        st.session_state.phase = phases[0] if phases[0] == "Test" else "Training"
+    phase = "Training"  # no switch when there are only training episodes
+    if len(phases) > 1:
+        phase = phase_switch(phases)
+    split = PHASE_SPLITS[phase]
+    eval_mode, test_mode = split == loader.EVAL_DIR, split == loader.TEST_DIR
+    if split is not None:
+        if missing := [r.name for r in runs if getattr(r, split) is None]:
+            st.caption(f"No {split} episodes, not shown: " + ", ".join(missing))
+        runs = [getattr(r, split) for r in with_split[split]]
 
     filter_summary = st.empty()  # filled once the filters below are read
     with st.expander("Filter", icon=":material/filter_list:"):
@@ -707,7 +747,9 @@ with st.sidebar:
 
         max_ep = int(max(r.episodes["episode"].max() for r in runs))
         eval_rounds = None
-        if eval_mode:
+        if test_mode:
+            ep_range = (0, max_ep)
+        elif eval_mode:
             ep_range = (0, max_ep)
             all_rounds = sorted({int(x) for r in runs for x in r.episodes["eval_round"]})
             eval_round = st.selectbox(
@@ -735,11 +777,7 @@ with st.sidebar:
             return f"all {plural}" if len(every) > 1 else f(every[0])
         return ", ".join(f(x) for x in chosen)
 
-    scope = (
-        (f"eval round {eval_rounds[0]}" if eval_rounds else "every eval round")
-        if eval_mode
-        else f"episodes {ep_range[0]} to {ep_range[1]}"
-    )
+    scope = episodes_shown()
     filter_summary.caption(
         f"Showing {_which(decks, all_decks, names.deck, 'decks')}, "
         f"{_which(stakes, all_stakes, names.stake, 'stakes')}, {scope}."
@@ -891,7 +929,8 @@ def iqm_table(by_group: bool) -> None:
         IQM_HELP
         + " 95% CI by stratified bootstrap: "
         + (
-            "where a group's runs played the same games (eval episodes), training seeds are "
+            "where a group's runs played the same games (test or eval episodes), training "
+            "seeds are "
             "redrawn within each game, as rliable does, so the interval reflects seed-to-seed "
             "variation; otherwise episodes are redrawn within each run."
             if by_group and shared
@@ -979,7 +1018,8 @@ def power_section(by_group: bool, baseline: str | None) -> None:
             "smallest difference found 80% of the time with this many seeds and games per seed. "
             "**Seeds needed**: per group, for your difference with this many games per seed; "
             "with unlimited games only seed-to-seed variation is left. Treats the groups as "
-            f"independent (no pairing on shared eval seeds), so it's conservative. {shown}."
+            f"independent (no pairing on shared test or eval games), so it's conservative. "
+            f"{shown}."
         )
         worst = pw.loc[pw["mde"].idxmax()]
         cols = st.columns(3)
@@ -1046,11 +1086,18 @@ def power_section(by_group: bool, baseline: str | None) -> None:
 with tabs[0]:
     if tabs[0].open:
         run_sheets()
-        if eval_mode:
+        if test_mode:
+            st.info(
+                "Showing **test games**: each run's final policy on the same fixed games, "
+                "never used in training. These are the results to report; the paired "
+                "comparison below matches runs game by game."
+            )
+        elif eval_mode:
             st.info(
                 "Showing **eval episodes** (greedy, fixed seeds), eval round "
                 f"{eval_rounds[0] if eval_rounds else 'all'}. Runs played the same games, "
-                "so the paired comparison below matches them game by game."
+                "so the paired comparison below matches them game by game. For learning "
+                "curves: with few games per round, rank runs on **Test** instead."
             )
         group_map = stats.groups(runs)
         by_group = (
@@ -1185,10 +1232,10 @@ with tabs[0]:
                         if by_group
                         else "bootstrap for ante, Wilson for win rate"
                     )
-                    + "). To compare runs game by game on one round, set **Episodes** to "
-                    "*Evaluation* in the sidebar.",
+                    + "). For the learning curve only: results come from the test games "
+                    "(**Episodes** → *Test* in the sidebar).",
                 )
-        if not eval_mode:
+        if split is None:
             if by_group:
                 curve = stats.group_learning_curve(runs, window)
                 band_help = "Student-t 95% CI across the group's runs"
@@ -1876,12 +1923,13 @@ with tabs[6]:
 
 # --- Hands ----------------------------------------------------------------
 NO_HAND_LOG_TRAINING = (
-    "Hands are only recorded for evaluation episodes. Switch **Episodes** to "
-    "**Evaluation** in the sidebar to see them."
+    "Hands are only recorded for test and evaluation episodes. Switch **Episodes** to "
+    "**Test** or **Evaluation** in the sidebar to see them."
 )
 NO_HAND_LOG_EVAL = (
-    "These eval episodes have no hand log. Runs from balatro-shop-rl with log_version 7 "
-    "record every play and discard in eval/hands.jsonl; train again with --eval-every."
+    "These episodes have no hand log. Runs from balatro-shop-rl with log_version 7 "
+    "record every play and discard in eval/hands.jsonl (and test/hands.jsonl from "
+    "log_version 14); train again with --eval-every."
 )
 
 
@@ -1889,7 +1937,7 @@ def hand_log_missing(run_list: list[Run]) -> bool:
     """Say why there are no hands to show, if there aren't."""
     if any(hands.has_hands(r) for r in run_list):
         return False
-    st.info(NO_HAND_LOG_EVAL if eval_mode else NO_HAND_LOG_TRAINING, icon=":material/style:")
+    st.info(NO_HAND_LOG_TRAINING if split is None else NO_HAND_LOG_EVAL, icon=":material/style:")
     return True
 
 
@@ -2210,11 +2258,7 @@ with tabs[8]:
 with export_area, st.expander("Export"):
     selection = {
         "runs": ", ".join(run_names),
-        "episodes": (
-            f"eval round {eval_rounds[0] if eval_rounds else 'all'}"
-            if eval_mode
-            else f"{ep_range[0]}-{ep_range[1]}"
-        ),
+        "episodes": episodes_shown(),
         "decks": ", ".join(decks),
         "stakes": ", ".join(stakes),
         "rolling window": window,
@@ -2230,6 +2274,7 @@ with export_area, st.expander("Export"):
             window,
             top,
             st.session_state.get("power_target", 0.25),
+            eval_runs,
         ),
         file_name=f"balatro_runs_{stamp}.zip",
         mime="application/zip",

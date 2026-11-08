@@ -73,10 +73,19 @@ def with_names(df: pd.DataFrame, keys: dict[str, str] | None = None) -> pd.DataF
 
 
 def computed_tables(
-    runs: list[Run], window: int = 50, top: int = 15, target: float = 0.25
+    runs: list[Run],
+    window: int = 50,
+    top: int = 15,
+    target: float = 0.25,
+    eval_runs: list[Run] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Every table the dashboard shows, keyed by file stem.  ``target``: the
-    difference in mean ante the power tables size the eval set for."""
+    difference in mean ante the power tables size the eval set for.  ``eval_runs``:
+    the runs' eval episodes for the eval curves (default: each run's own ``eval``,
+    or the run itself if it is one), so the curves don't depend on which episodes
+    ``runs`` are."""
+    if eval_runs is None:
+        eval_runs = [r.eval or r for r in runs]
     base = runs[0].name if runs else ""
     base_group = stats.group_of(runs[0]) if runs else ""
     tables: dict[str, pd.DataFrame] = {
@@ -101,9 +110,9 @@ def computed_tables(
         "group_power": stats.power_groups(runs, target),
         "by_deck": with_names(metrics.by_deck(runs)),
         "learning_curve": metrics.learning_curve(runs, window),
-        # eval runs, or each training run's eval episodes (runs without them are skipped)
-        "eval_curve": stats.eval_curve([r.eval or r for r in runs]),
-        "group_eval_curve": stats.group_eval_curve([r.eval or r for r in runs]),
+        # runs without eval episodes are skipped
+        "eval_curve": stats.eval_curve(eval_runs),
+        "group_eval_curve": stats.group_eval_curve(eval_runs),
         "group_learning_curve": stats.group_learning_curve(runs, window),
         "ante_distribution": metrics.ante_distribution(runs),
         "action_frequency": with_names(metrics.action_frequency(runs), {"action": "action"}),
@@ -167,6 +176,7 @@ def export_zip(
     window: int = 50,
     top: int = 15,
     target: float = 0.25,
+    eval_runs: list[Run] | None = None,
 ) -> bytes:
     """ZIP with ``runs/<run>/{episodes,steps,rounds}.csv``, ``tables/*.csv``,
     ``latex/*.tex`` (the main result tables) and a README."""
@@ -187,7 +197,7 @@ def export_zip(
                 put(f"{base}/rounds.csv", with_names(r.rounds))
             if r.shops is not None:  # one row per offered item
                 put(f"{base}/shop_offers.csv", with_names(economy.offers(r), {"key": "item"}))
-        for name, df in computed_tables(runs, window, top, target).items():
+        for name, df in computed_tables(runs, window, top, target, eval_runs).items():
             put(f"tables/{name}.csv", df)
         for name, tex in latex.tables(runs, target).items():
             z.writestr(f"latex/{name}.tex", tex)

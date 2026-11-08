@@ -30,7 +30,7 @@ import pandas as pd
 import pyarrow as pa
 
 from balatro_analysis import loader
-from balatro_analysis.loader import EVAL_DIR, LOG_FILES, Progress, Run, extend_run, load_run
+from balatro_analysis.loader import LOG_FILES, SPLIT_DIRS, Progress, Run, extend_run, load_run
 
 ENV = "BALATRO_ANALYSIS_CACHE"
 STALE_DAYS = 30  # cached runs not read or written for this long are deleted
@@ -82,9 +82,9 @@ def _code_text(source: str) -> str:
 
 def fingerprint(path: Path) -> tuple:
     """What a cached copy of the run at ``path`` must match to be reused."""
-    dirs = [path, path / EVAL_DIR]
-    if loader.is_eval_dir(path):
-        dirs.append(path.parent)  # an eval dir loaded on its own reads the run's config
+    dirs = [path, *(path / d for d in SPLIT_DIRS)]
+    if loader.is_split_dir(path):
+        dirs.append(path.parent)  # a split loaded on its own reads the run's config
     files = []
     for d in dirs:
         for name in SOURCES:
