@@ -82,6 +82,7 @@ from balatro_analysis import (  # noqa: E402
     plots,
     purchases,
     replay,
+    report_stats,
     runcache,
     stats,
     stickers,
@@ -1553,12 +1554,81 @@ def show_study_tables(groups: pd.DataFrame, pairs: pd.DataFrame, key: str) -> No
         )
 
 
+def study_members(spec: dict) -> list[Run]:
+    """The study's runs on the episodes shown: each group's runs, and for a member
+    ``<group>@<tag>`` the group's runs' replay/<tag>/ games (whatever Episodes shows)."""
+    out = []
+    for name in spec.get("groups", []):
+        group, tag = studies.member(name)
+        if tag is None:
+            out += [r for r in runs if stats.group_of(r) == name]
+            continue
+        for orig in train_runs:
+            if stats.group_of(orig) != group:
+                continue
+            rp = orig.split(f"{loader.REPLAY_DIR}/{tag}")
+            if rp is not None:
+                out.append(studies.as_member(filtered(rp, 0, float("inf")), name))
+    return out
+
+
+def script_tables(spec: dict, members: list[Run]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The study as balatro-shop-rl's scripts print it (report_stats): a row per
+    group, then each pair."""
+    sets = stats.groups(members)
+    order = [g for g in spec.get("groups", []) if g in sets]
+    summary = {g: report_stats.group_summary(sets[g]) for g in order}
+    g_rows = [report_stats.group_row(g, summary[g]) for g in order]
+    p_rows = [
+        report_stats.compare_row(f"{a} - {b}", report_stats.compare(summary[a], summary[b]))
+        for a, b in spec.get("pairs", [])
+        if summary.get(a) and summary.get(b)
+    ]
+    return (
+        pd.DataFrame(g_rows, columns=report_stats.GROUP_COLUMNS),
+        pd.DataFrame(p_rows, columns=report_stats.COMPARE_COLUMNS),
+    )
+
+
+def show_script_tables(
+    spec: dict, members: list[Run], memo_run: Run, memo_key: str, key: str
+) -> None:
+    """``script_tables`` in an expander, computed only while it is open (the
+    bootstrap takes a second or two), memoised on ``memo_run`` (a stable run)."""
+    box = st.expander(
+        "As the balatro-shop-rl scripts print it",
+        icon=":material/terminal:",
+        key=f"{key}_script",
+        on_change="rerun",
+    )
+    with box:
+        if not box.open:
+            return
+        g, p = stats.memo_value(
+            memo_run,
+            f"script:{memo_key}:" + ",".join(r.name for r in members),
+            lambda: script_tables(spec, members),
+        )
+        st.caption(
+            "shop_rl.report_stats, as endless_report.py, deck_transfer.py and stickers.py "
+            "report: win % ± SD over seeds, mean final round, mean ante over seeds, IQM ante "
+            "with a stratified bootstrap CI (numpy seed 0); pairs: paired by seed (Student-t "
+            "CI and p), seeds better, P(improvement) game by game. Copy the Markdown for notes."
+        )
+        st.dataframe(g, hide_index=True, key=f"{key}_script_groups")
+        if len(p):
+            st.dataframe(p, hide_index=True, key=f"{key}_script_pairs")
+        text = report_stats.markdown(report_stats.GROUP_COLUMNS, g.values.tolist())
+        if len(p):
+            text += "\n\n" + report_stats.markdown(report_stats.COMPARE_COLUMNS, p.values.tolist())
+        st.code(text, language="markdown")
+
+
 def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> None:
     """The chosen study's results on the episodes shown: one row per group, then
     each pair A - B matched by training seed; by ``split_by`` too if it has one."""
     spec = manifest.studies[study]
-    in_study = set(spec.get("groups", []))
-    members = [r for r in runs if stats.group_of(r) in in_study]
+    members = study_members(spec)
     st.subheader(spec.get("title", study))
     if not members:
         st.info("None of this study's runs are picked (or have these episodes).")
@@ -1591,6 +1661,7 @@ def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> No
             memo_key = f"{study}:cap"
     groups, pairs = study_tables(memo_key, spec, members)
     show_study_tables(groups, pairs, f"study_{study}")
+    show_script_tables(spec, members, members[0], memo_key, f"study_{study}")
     tex = [
         latex.study_groups(groups, latex.escape(spec.get("title", study)), f"{study}-groups"),
         latex.study_pairs(
@@ -1609,6 +1680,9 @@ def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> No
             ):
                 g, p = study_tables(f"{memo_key}:{col}={v}", spec, sub)
                 show_study_tables(g, p, f"study_{study}_{v}")
+                show_script_tables(
+                    spec, sub, members[0], f"{memo_key}:{col}={v}", f"study_{study}_{v}"
+                )
                 tex.append(
                     latex.study_pairs(
                         p,

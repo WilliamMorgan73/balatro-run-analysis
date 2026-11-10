@@ -228,3 +228,76 @@ def test_study_caps_endless_antes_at_8(group_runs_dir):
     at.toggle(key="study_cap_ab").set_value(False).run()
     groups = next(d.value for d in at.dataframe if "IQM ante" in d.value.columns)
     assert groups.set_index("Group").at["b", "Ante"] > 8
+
+
+# --- studies over replays: "<group>@<tag>" -----------------------------------
+
+
+def test_member_names():
+    assert studies.member("stakes") == ("stakes", None)
+    assert studies.member("ref@stakes_4_7") == ("ref", "stakes_4_7")
+    run = _run("ref_s0", "ref", 0, [3, 4])
+    m = studies.as_member(run, "ref@x")
+    assert m.name == "ref_s0@x" and m.config["group"] == "ref@x" and m.config["seed"] == 0
+    assert studies.as_member(run, "ref@x") is m
+    assert run.config["group"] == "ref"
+
+
+def _replay_study_dir(group_runs_dir: Path) -> Path:
+    """Group a replayed as "zero" (one ante worse than b's test games), b trained:
+    a study pairing b with a@zero by seed and test game."""
+    import shutil
+
+    for d in sorted(group_runs_dir.iterdir()):
+        _with_test(d, ante_shift=3 if d.name.startswith("b") else 0)
+        if d.name.startswith("a") and d.name != "a_s2":  # a_s2 not replayed
+            shutil.copytree(d / "test", d / "replay" / "zero")
+            e = pd.read_csv(d / "replay" / "zero" / "episodes.csv")
+            for col in ("ante", "max_ante"):
+                if col in e:
+                    e[col] += 2
+            e.to_csv(d / "replay" / "zero" / "episodes.csv", index=False)
+            (d / "replay" / "zero" / "replay.json").write_text(json.dumps({"tag": "zero"}))
+    runs = {f"a_s{s}": ("a", s) for s in range(3)} | {f"b_s{s}": ("b", s) for s in range(2)}
+    _manifest(
+        group_runs_dir / "manifest.json",
+        group_runs_dir,
+        runs,
+        studies={"zs": {"groups": ["b", "a@zero"], "pairs": [["b", "a@zero"]]}},
+        problems=[
+            {
+                "kind": "missing_seeds",
+                "study": "zs",
+                "group": "a@zero",
+                "message": "a@zero: seed 2 missing",
+            }
+        ],
+    )
+    return group_runs_dir
+
+
+def test_manifest_study_runs_with_a_replay(group_runs_dir):
+    m = studies.load_manifest(_replay_study_dir(group_runs_dir) / "manifest.json")
+    assert m.study_runs("zs") == ["b_s0", "b_s1", "a_s0", "a_s1", "a_s2"]
+    assert m.study_problems("zs") == ["a@zero: seed 2 missing"]
+
+
+def test_app_study_over_a_replay(group_runs_dir):
+    at = _app(_replay_study_dir(group_runs_dir))
+    at.sidebar.selectbox(key="study").set_value("zs").run()
+    assert not at.exception
+    frames = [d.value for d in at.dataframe]
+    groups = next(f for f in frames if "IQM ante" in f.columns).set_index("Group")
+    assert set(groups.index) == {"b", "a@zero"}
+    assert groups.at["a@zero", "Seeds"] == 2
+    pairs = next(f for f in frames if "Seed pairs" in f.columns)
+    assert pairs.iloc[0]["Seed pairs"] == 2
+    assert pairs.iloc[0]["Δ ante (A - B)"] == pytest.approx(1.0)  # b +3, a@zero +2
+    at.session_state["study_zs_script"] = True
+    at.run()
+    assert not at.exception
+    script = next(d.value for d in at.dataframe if "IQM ante [95% CI]" in d.value.columns)
+    assert list(script["arm"]) == ["b", "a@zero"]
+    compare = next(d.value for d in at.dataframe if "P(improvement)" in d.value.columns)
+    assert compare.iloc[0]["A - B"] == "b - a@zero"
+    assert compare.iloc[0]["seeds better"] == "2/2"

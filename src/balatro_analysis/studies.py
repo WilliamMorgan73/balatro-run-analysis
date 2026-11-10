@@ -3,7 +3,9 @@
 balatro-shop-rl's ``scripts/run_manifest.py`` writes ``runs/manifest.json``: every run
 in its runs folder and archives (so one group can span both), with each run's splits
 and a test summary, the studies (groups to compare, and pairs "A - B" matched by
-training seed), and problems such as missing seeds.  ``load_manifest`` reads it;
+training seed), and problems such as missing seeds.  A study can name a group's
+replay as ``<group>@<tag>``: that group's runs' ``replay/<tag>/`` games (``member``,
+``as_member``).  ``load_manifest`` reads it;
 ``group_table`` and ``pair_table`` are a study's results, on whichever episodes the
 runs given hold (the dashboard passes the test games by default).
 """
@@ -23,6 +25,30 @@ from balatro_analysis.loader import Run
 
 MANIFEST = "manifest.json"
 SUPPORTED_VERSION = 1
+REPLAY_SEP = "@"  # "<group>@<tag>": the group's replay/<tag>/ games
+
+
+def member(name: str) -> tuple[str, str | None]:
+    """A study member's group and replay tag (None: the group's own games)."""
+    group, _, tag = name.partition(REPLAY_SEP)
+    return group, tag or None
+
+
+def as_member(run: Run, name: str) -> Run:
+    """A replay ``run`` as the study member ``name`` (``<group>@<tag>``): named
+    ``<run>@<tag>`` so it can sit beside the run's own games, in group ``name``.
+    Episodes only (what the study tables read); kept on ``run``."""
+    key = f"studies:member:{name}"
+    if key not in run._memo:
+        _, tag = member(name)
+        run._memo[key] = Run(
+            f"{run.name}{REPLAY_SEP}{tag}",
+            run.path,
+            run.episodes,
+            {**run.config, "group": name},
+            replay=run.replay,
+        )
+    return run._memo[key]
 
 
 @dataclass
@@ -39,13 +65,20 @@ class Manifest:
         return self.base / self.runs[name]["path"]
 
     def study_runs(self, study: str) -> list[str]:
-        """The runs of the study's groups, group by group, in seed order."""
-        return [r for g in self.studies[study].get("groups", []) for r in self.groups.get(g, [])]
+        """The runs of the study's groups, group by group, in seed order (a member
+        ``<group>@<tag>`` needs the group's runs)."""
+        names = [
+            r
+            for g in self.studies[study].get("groups", [])
+            for r in self.groups.get(member(g)[0], [])
+        ]
+        return list(dict.fromkeys(names))
 
     def study_problems(self, study: str) -> list[str]:
         """What's wrong with the study's runs: its own problems (missing seeds or
         groups), its runs' (no test set) and its groups' (several commits)."""
-        groups = set(self.studies[study].get("groups", []))
+        members = self.studies[study].get("groups", [])
+        groups = set(members) | {member(g)[0] for g in members}
         runs = set(self.study_runs(study))
         return [
             p["message"]
