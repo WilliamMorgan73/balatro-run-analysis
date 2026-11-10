@@ -417,6 +417,7 @@ SHEET_CSS = f"""<style>
   overflow-wrap:anywhere}}
 .rs-who{{font-size:12.5px;opacity:.8;margin-top:2px}}
 .rs-best{{color:{PLAY};font-weight:800}}
+.rs-endless{{color:#b26cbb;font-weight:800}}
 .rs-wells{{display:grid;grid-template-columns:1.3fr 1fr;gap:8px}}
 .rs-well{{background:{TABLE};border-radius:8px;padding:6px 10px}}
 .rs-well small{{display:block;font-size:12px;opacity:.75}}
@@ -475,6 +476,9 @@ def run_sheet_html(
         for d in decks
     )
     best_html = '<span class="rs-best"> Best mean ante</span>' if best else ""
+    if config.get("endless") or (replay or {}).get("endless"):
+        best_html += '<span class="rs-endless" title="Won runs play on past ante 8"> Endless</span>'
+
     return (
         f'{SHEET_CSS}<div class="rs{" best" if best else ""}">'
         f'<div><div class="rs-name">{_esc(name)}</div>'

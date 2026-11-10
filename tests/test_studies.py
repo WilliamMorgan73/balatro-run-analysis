@@ -201,3 +201,30 @@ def test_app_unreadable_manifest_falls_back(group_runs_dir, tmp_path):
     assert not at.exception
     assert any("Couldn't read the run manifest" in w.value for w in at.sidebar.warning)
     assert len(at.session_state["picked_runs"]) == 5
+
+
+def test_study_caps_endless_antes_at_8(group_runs_dir):
+    """b's runs are endless and go past ante 8: a study mixing them with a's normal
+    runs caps ante at 8 by default, so both compare like for like."""
+    for d in sorted(group_runs_dir.iterdir()):
+        b = d.name.startswith("b")
+        _with_test(d, ante_shift=10 if b else 0)
+        if b:
+            config = json.loads((d / "config.json").read_text())
+            (d / "config.json").write_text(json.dumps(config | {"endless": True}))
+    runs = {f"a_s{s}": ("a", s) for s in range(3)} | {f"b_s{s}": ("b", s) for s in range(2)}
+    _manifest(
+        group_runs_dir / "manifest.json",
+        group_runs_dir,
+        runs,
+        studies={"ab": {"groups": ["a", "b"], "pairs": [["b", "a"]]}},
+    )
+    at = _app(group_runs_dir)
+    at.sidebar.selectbox(key="study").set_value("ab").run()
+    assert not at.exception
+    assert at.toggle(key="study_cap_ab").value is True
+    groups = next(d.value for d in at.dataframe if "IQM ante" in d.value.columns)
+    assert groups.set_index("Group").at["b", "Ante"] == 8
+    at.toggle(key="study_cap_ab").set_value(False).run()
+    groups = next(d.value for d in at.dataframe if "IQM ante" in d.value.columns)
+    assert groups.set_index("Group").at["b", "Ante"] > 8

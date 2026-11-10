@@ -375,7 +375,10 @@ def blind_dialog(b: BlindInfo, names: Names, did: str) -> str:
     e = b.entry
     tags = []
     if e.get("showdown"):
-        tags.append('<span class="dt-tag" style="background:#b26cbb">Finisher · ante 8</span>')
+        tags.append(
+            '<span class="dt-tag" style="background:#b26cbb">'
+            "Finisher · ante 8 (and every 8th in endless)</span>"
+        )
     elif e.get("min_ante"):
         tags.append(f'<span class="dt-tag">From ante {e["min_ante"]}</span>')
     if e.get("mult"):

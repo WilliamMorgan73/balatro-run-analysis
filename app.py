@@ -71,6 +71,7 @@ from balatro_analysis import (  # noqa: E402
     collection,
     details,
     economy,
+    endless,
     export,
     find,
     hands,
@@ -1161,6 +1162,49 @@ def improvement_table(by_group: bool, baseline: str) -> None:
     table(poi, column_config={names.column(c): num for c in ("p_improvement", "p_low", "p_high")})
 
 
+def past_eight_panel(by_group: bool) -> None:
+    """Endless runs (log_version 17): how far the won games went past ante 8, as
+    balatro-shop-rl's scripts/endless_report.py."""
+    endless_runs = [r for r in runs if endless.is_endless(r)]
+    if not endless_runs:
+        return
+    sets = stats.groups(endless_runs) if by_group else {r.name: [r] for r in endless_runs}
+    rows, counts = [], {}
+    for name, members in sets.items():
+        res = endless.past_eight(members)
+        if res is None:
+            continue
+        rows.append(
+            {
+                "group" if by_group else "run": name,
+                "games": res.games,
+                "won": res.won,
+                "mean highest ante of a win": res.mean_win_ante,
+                "lowest seed": res.seed_low,
+                "highest seed": res.seed_high,
+            }
+        )
+        counts[name] = res.counts
+    st.markdown("**Endless: past ante 8**")
+    if not rows:
+        st.caption("No won games among the endless runs shown.")
+        return
+    table = pd.DataFrame(rows)
+    if not by_group:
+        table = table.drop(columns=["lowest seed", "highest seed"])
+    st.dataframe(table, hide_index=True, key="past_eight")
+    st.caption(
+        "Endless runs play a won game on until it is lost, so a win's highest ante can pass "
+        "8. Mean highest ante of a win: each run's mean over its won games, then the mean "
+        "over runs (seeds), with the range across them. Counts of won games by highest ante:"
+    )
+    st.dataframe(
+        pd.DataFrame(counts).fillna(0).astype(int).rename_axis("highest ante").reset_index(),
+        hide_index=True,
+        key="past_eight_counts",
+    )
+
+
 def profile_chart(by_group: bool) -> None:
     """``stats.performance_profile`` of the selection as a chart."""
     prof = stats.performance_profile(runs, by_group)
@@ -1393,7 +1437,21 @@ def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> No
             "Not the test games: set **Episodes** to *Test* for the results to report.",
             icon=":material/info:",
         )
-    groups, pairs = study_tables(study, spec, members)
+    kinds = {endless.is_endless(r) for r in members}
+    memo_key = study  # the tables' memo key
+    if True in kinds:
+        mixed = len(kinds) > 1
+        if st.toggle(
+            "Cap ante at 8",
+            value=mixed,
+            key=f"study_cap_{study}",
+            help="Endless runs play a won game on past ante 8. Capped, every run's ante stops "
+            "at 8, so endless and normal runs compare like for like (as endless_report.py's "
+            "first table); on by default when the study mixes them.",
+        ):
+            members = [endless.capped(r) for r in members]
+            memo_key = f"{study}:cap"
+    groups, pairs = study_tables(memo_key, spec, members)
     show_study_tables(groups, pairs, f"study_{study}")
     tex = [
         latex.study_groups(groups, latex.escape(spec.get("title", study)), f"{study}-groups"),
@@ -1411,7 +1469,7 @@ def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> No
             with st.expander(
                 f"{names.column(col)}: {names.of(col)(v) if col in ('deck', 'stake') else v}"
             ):
-                g, p = study_tables(f"{study}:{col}={v}", spec, sub)
+                g, p = study_tables(f"{memo_key}:{col}={v}", spec, sub)
                 show_study_tables(g, p, f"study_{study}_{v}")
                 tex.append(
                     latex.study_pairs(
@@ -1623,8 +1681,9 @@ with tabs[0], table_budget():
                 "ante reached",
                 "Share of episodes that ended at each ante (the highest ante reached), one bar "
                 "per run. Bars further right mean the agent gets further; winning means "
-                "clearing ante 8.",
+                "clearing ante 8 (endless runs play a win on past it).",
             )
+            past_eight_panel(by_group)
             profile_chart(by_group)
         with st.expander("Run configs"):
             for r in runs:
