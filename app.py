@@ -79,6 +79,7 @@ from balatro_analysis import (  # noqa: E402
     loader,
     memory,
     metrics,
+    order,
     plots,
     purchases,
     replay,
@@ -1115,6 +1116,44 @@ def sticker_panel() -> None:
         "shop decision: mean over the group's runs, the two totals summed. An expired "
         "Perishable's decisions before sale are counted per episode and joker, the selling "
         "decision included. As balatro-shop-rl's scripts/stickers.py."
+    )
+
+
+def order_offers() -> None:
+    """The Order's offers by xMult jokers held (offers.jsonl, --offer-jokers j_order),
+    as part 1 of balatro-shop-rl's scripts/order_context.py."""
+    with_order = [r for r in runs if order.has_order_offers(r)]
+    if not with_order:
+        return
+    st.subheader("The Order: bought more with xMult jokers held?")
+    for name, members in grouped(with_order).items():
+        t, diff = order.order_table(members)
+        if not len(t):
+            continue
+        st.markdown(f"**{name}** ({len(members)} run{'s' if len(members) > 1 else ''})")
+        table(
+            t,
+            column_config={
+                c: st.column_config.NumberColumn(format=f)
+                for c, f in (
+                    ("buy rate", "%.2f"),
+                    ("SD (seeds)", "%.2f"),
+                    ("mean q_buy_adv", "%+.3f"),
+                )
+            },
+        )
+        if diff is not None:
+            st.caption(
+                f"Buy rate with 1 xMult joker held minus none, paired over seeds: "
+                f"{diff['mean']:+.3f} [{diff['lo']:+.3f}, {diff['hi']:+.3f}], "
+                f"p = {diff['p']:.3g}, {diff['better']}/{diff['n']} seeds."
+            )
+    st.caption(
+        "Decisions where buying The Order was legal (one row per decision and slot, from "
+        "offers.jsonl), by how many xMult jokers (an x_mult term in the joker algebra) "
+        "were held: buy rate per run, mean ± SD over seeds; q_buy_adv is the DQN's value of "
+        "buying minus the best other legal action. As part 1 of balatro-shop-rl's "
+        "scripts/order_context.py."
     )
 
 
@@ -2443,6 +2482,7 @@ with tabs[3], table_budget():
                             ],
                             "econ-jk",
                         )
+                order_offers()
 
         with sub[7]:
             if sub[7].open:

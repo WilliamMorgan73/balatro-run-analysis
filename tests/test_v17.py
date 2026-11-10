@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from streamlit.testing.v1 import AppTest
 from test_app import TABS
 from test_test_split import _app
 
@@ -15,6 +16,7 @@ from balatro_analysis import cards
 from balatro_analysis.loader import find_runs, load_run
 
 V17 = Path(__file__).parent / "fixtures" / "v17"
+APP = str(Path(__file__).parent.parent / "app.py")
 
 
 def test_v17_run_loads():
@@ -82,4 +84,47 @@ def test_every_tab_renders_on_a_v17_run(tmp_path, phase, tab):
     root = tmp_path / "runs"
     shutil.copytree(V17, root)
     at = _app(root, phase, tab)
+    assert not at.exception
+
+
+SUB_TABS = (
+    [
+        ("Actions", "actions_tab", t)
+        for t in (
+            "Overview",
+            "Context",
+            "Sequences",
+            "Over training",
+            "Availability",
+            "Actions vs outcome",
+        )
+    ]
+    + [
+        ("Economy", "econ_tab", t)
+        for t in (
+            "Money flow",
+            "Spending",
+            "Interest & saving",
+            "Rerolls & prices",
+            "Economy vs outcome",
+            "Cash-out income",
+            "Shop offers",
+            "Shop purchases",
+        )
+    ]
+    + [("Episode explorer", "explorer_view", t) for t in ("Replay", "Shop", "Money & blinds")]
+)
+
+
+@pytest.mark.parametrize(("tab", "key", "sub"), SUB_TABS)
+@pytest.mark.parametrize("phase", ["Test", "Replay: retest", "Training"])
+def test_every_sub_tab_renders_on_a_v17_run(tmp_path, phase, tab, key, sub):
+    root = tmp_path / "runs"
+    shutil.copytree(V17, root)
+    at = AppTest.from_file(APP, default_timeout=60)
+    at.session_state["runs_dir"] = str(root)
+    at.session_state["phase"] = phase
+    at.session_state["main_tab"] = tab
+    at.session_state[key] = sub
+    at.run()
     assert not at.exception
