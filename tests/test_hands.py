@@ -178,8 +178,8 @@ def test_level_and_jokers_estimated_without_them(eval_run):
 
 
 def test_parse_joker():
-    assert cards.parse_joker("j_joker") == ("j_joker", None)
-    assert cards.parse_joker({"k": "j_joker", "ed": "foil"}) == ("j_joker", "foil")
+    assert cards.parse_joker("j_joker")[:2] == ("j_joker", None)
+    assert cards.parse_joker({"k": "j_joker", "ed": "foil"})[:2] == ("j_joker", "foil")
     assert cards.joker_keys(None) is None
 
 

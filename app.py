@@ -374,6 +374,17 @@ LOG_VERSIONS = {
     5: "cash-out money from tags",
     6: "highest ante reached (max_ante); a sell's item_cost is its sale value",
     7: "eval hand and deck logs",
+    8: "upstream Jackdaw engine",
+    9: "held-out jokers",
+    10: "logged offers of chosen jokers (offers.jsonl)",
+    11: "DQN function tables",
+    12: "round features",
+    13: "relative suits",
+    14: "a test set (test/)",
+    15: "scaling jokers' values",
+    16: "deck suits",
+    17: "editions and stickers on shop items and held jokers, the shop at each decision, "
+    "endless mode",
 }
 
 

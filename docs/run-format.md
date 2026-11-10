@@ -1,4 +1,4 @@
-# Run format (log_version 15)
+# Run format (log_version 17)
 
 The contract between `balatro-shop-rl`, which writes runs (`src/shop_rl/runlog.py`,
 `shop_env.py`, `train.py`), and this dashboard, which only reads them
@@ -18,6 +18,9 @@ A **run** is one folder, `runs/<run-name>/`:
 | `eval/` | the same files for greedy eval episodes | with `--eval-every N` |
 | `eval/hands.jsonl` | one per play or discard in an eval episode | with `--eval-every N`, unless `--no-step-log` |
 | `eval/decks.jsonl` | one per blind of an eval episode: the deck and hand levels | with `--eval-every N`, unless `--no-step-log` |
+| `eval/offers.jsonl` | one per decision and shop slot offering an `--offer-jokers` joker | with `--offer-jokers` (log_version 10) |
+| `test/` | the eval files for the final policy on fixed test games, one round | with `--test-episodes N` (log_version 14) |
+| `replay/<tag>/` | the test files for the test games played again by `scripts/replay_test.py`, plus `replay.json` | when replayed (log_version 17) |
 | `q_table.json` | the learned table | `--shop qlearn` only |
 | `events.out.tfevents.*` | tensorboard scalars | with the `train` extra installed |
 
@@ -35,7 +38,9 @@ Every command-line option of `scripts/train.py` (`episodes`, `play`, `shop`, `se
 | `play_agent`, `shop_agent` | class names, e.g. `StrongPlayAgent`, `QLearningShopAgent` |
 | `play_params`, `agent_params` | the agents' parameters (`{}` if none) |
 | `n_actions`, `action_names` | the shop action space: 17 names, index = action id |
-| `log_version` | this spec's version: 15 |
+| `log_version` | this spec's version: 17 |
+| `endless` | `--endless`: a won run plays on past ante 8 until it is lost (log_version 17) |
+| `max_hours` | `--max-hours`: training stopped after this many hours (`null`: none), so `episodes` is only an upper bound; `test/episodes.csv` `train_episodes` has the real count (log_version 17) |
 | `eval_set` | the eval games, `[{seed, deck, stake}, ...]` (`[]` without eval) |
 | `started` | local start time, ISO 8601 |
 | `shop_rl_commit` | `balatro-shop-rl` commit, `-dirty` if it had uncommitted changes; `null` outside git |
@@ -51,8 +56,8 @@ their `jackdaw_commit` is the fork checkout's commit.
 | --- | --- |
 | `episode` | 0-based episode number |
 | `ante` | ante the run ended on (lowered by Hieroglyph/Petroglyph) |
-| `max_ante` | highest ante a blind was played in: 8 for a win |
-| `won` | 1 if the run was won |
+| `max_ante` | highest ante a blind was played in: 8 for a win, more in an endless run that went on |
+| `won` | 1 if the run was won (the ante-8 boss beaten, endless or not) |
 | `return` | sum of shop rewards |
 | `shop_steps` | shop decisions taken |
 | `shops_visited` | shops entered (returning from a pack doesn't count) |
@@ -76,9 +81,13 @@ One object per shop decision:
 | `ante`, `round`, `blind_on_deck` | where the run is |
 | `jokers_before`, `consumables_before` | held keys before acting |
 | `joker_state` | one entry per `jokers_before` slot: a scaling joker's current values (see [Scaling jokers](#scaling-jokers)), `null` for a joker that doesn't scale (log_version 15) |
+| `jokers_extra` | one entry per `jokers_before` slot: `{"ed", "st", "perish"}` with only what applies, or `null` (log_version 17; see [Stickers](#stickers)) |
+| `joker_slots` | joker slots the run has (log_version 17) |
+| `shop` | `{"card": [...], "voucher": [...], "pack": [...]}`: the keys on offer at this decision, in slot order (log_version 17) |
 | `legal` | shop action ids that were legal |
 | `action`, `action_name` | what was chosen |
 | `item_key`, `item_cost` | the item it targets and the money it moves: a buy's price, a sell's sale value, a use's card price; `null` for reroll/skip |
+| `item_edition`, `item_stickers` | that item's edition (or `null`) and stickers (a list; `null` for reroll/skip) (log_version 17) |
 | `dollars_before`, `dollars_after` | money around the action |
 | `dollars_after_pack` | money once a pack opened by this action closes (picks can pay or cost), else `null` |
 | `reward`, `done` | reward for this step and whether the run ended |
@@ -107,7 +116,7 @@ One object per shop offer:
 | `ante`, `round`, `dollars` | state at the time |
 | `reason` | `enter` or `reroll` |
 | `reroll_cost` | current reroll price |
-| `items` | `[{kind: card/voucher/pack, key, cost}, ...]` |
+| `items` | `[{kind: card/voucher/pack, key, cost, ed?, st?, hidden?}, ...]` in slot order, cards then voucher then packs. `ed` (edition) and `st` (stickers, a list) only when set (log_version 17); `"hidden": true` on a held-out joker in a training shop (log_version 9) |
 
 ## eval/hands.jsonl
 
@@ -122,7 +131,7 @@ times the size of `steps.jsonl`. One object per play or discard, in order:
 | `hand` | the cards held before acting, in hand order (see [Cards](#cards)) |
 | `picked` | indices into `hand` of the cards played or discarded (Cerulean Bell's forced card included) |
 | `hand_level` | the played hand's level when played (before scoring; Space Joker levels up during it); `null` for a discard |
-| `jokers` | jokers held when acting, in order: a key, or `{"k": key, "ed": edition, "s": values}` with only what applies (`s`: a scaling joker's current values, log_version 15; see [Scaling jokers](#scaling-jokers)) |
+| `jokers` | jokers held when acting, in order: a key, or `{"k": key, "ed": edition, "st": stickers, "perish": rounds left, "s": values}` with only what applies (`s`: a scaling joker's current values, log_version 15, see [Scaling jokers](#scaling-jokers); `st` and `perish`: log_version 17, see [Stickers](#stickers)) |
 | `hand_type`, `chips`, `mult`, `score`, `debuffed` | the engine's scoring of a play (`score` = floor(chips × mult), inf past a double); `null` for a discard |
 | `chips_total` | the blind's score after this action |
 | `hands_left`, `discards_left`, `dollars` | after this action |
@@ -156,6 +165,31 @@ in `balatro-shop-rl`'s joker algebra (`runlog.STATE_FIELDS`); today each scaling
 one. The dashboard labels them as the game does ("+6 Mult", "X1.91 Mult") and shows any other
 path as logged.
 
+## Stickers
+
+From log_version 17 (stakes 4 and up), a joker can carry stickers: `st` is a list of
+`eternal` (can't be sold), `perishable` (debuffed once its rounds run out) and `rental`
+(costs money each round). A Perishable also carries `perish`, its rounds left (a number; 0
+once expired). They are on held jokers (`steps.jsonl` `jokers_extra`, `hands.jsonl`
+`jokers`), on shop items (`shops.jsonl` items), on the item an action targets
+(`steps.jsonl` `item_stickers`) and on logged offers (`offers.jsonl` `stickers`).
+
+## offers.jsonl
+
+Eval, test and replay episodes, with `--offer-jokers`: one object per shop decision and slot
+offering one of those jokers, with the decision taken (`buy_legal`, `bought`), the held
+`jokers`, the slot's `edition` and, from log_version 17, its `stickers` (a list), plus the
+DQN's values (`q_buy_adv`, ...).
+
+## replay.json
+
+`replay/<tag>/replay.json` says what `scripts/replay_test.py` played: `run`, `group`, `tag`,
+`games`, `seed_prefix`, `decks`, `stakes` (cycled per game: deck `i % len(decks)`, then
+stake), `endless`, `offer_jokers`, `train_episodes`, `log_version`, `shop_rl_commit`,
+`jackdaw_version`, `started`. A replay is logged by the code that wrote it, so its
+`log_version` can be newer than its run's. The tag `retest` is the test games again,
+unchanged, with the current logging.
+
 ## Version history
 
 | Version | Change |
@@ -173,5 +207,7 @@ path as logged.
 | 11 | `dqn.jsonl` `fn_table` and `redrawn`; `agent_params` `discount_per` |
 | 12 | `--round-features` (`agent_params` `round_features`) |
 | 13 | `--relative-suits` (config `relative_suits`) |
-| 14 | Training seeds `TRAIN_s<seed>_<n>` (config `seed_prefix`); optional `test/` folder in the eval format (`--test-episodes`). Not read as part of the run here yet: each `test/` loads as a run of its own |
+| 14 | Training seeds `TRAIN_s<seed>_<n>` (config `seed_prefix`); optional `test/` folder in the eval format (`--test-episodes`) |
 | 15 | A scaling joker's current values: `s` on its entry in `hands.jsonl` `jokers`, and `steps.jsonl` `joker_state` (see [Scaling jokers](#scaling-jokers)) |
+| 16 | `--deck-suits` (config `deck_suits`; `agent_params` `deck_suits`) |
+| 17 | Editions and stickers: `shops.jsonl` items `ed`/`st`; `steps.jsonl` `item_edition`, `item_stickers`, `jokers_extra`, `joker_slots`, `shop`; `hands.jsonl` jokers `st`/`perish`; `offers.jsonl` `stickers`. `--endless` (config `endless`, `max_ante` past 8) and `--max-hours`. `replay/<tag>/` from `scripts/replay_test.py` |

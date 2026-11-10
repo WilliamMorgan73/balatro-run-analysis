@@ -1,0 +1,23 @@
+{
+  "run": "run_v17",
+  "group": "v17",
+  "tag": "retest",
+  "games": 2,
+  "seed_prefix": "TEST",
+  "decks": [
+    "b_red"
+  ],
+  "stakes": [
+    4,
+    7
+  ],
+  "endless": true,
+  "offer_jokers": [
+    "j_order"
+  ],
+  "train_episodes": 3,
+  "log_version": 17,
+  "shop_rl_commit": "df06e1b",
+  "jackdaw_version": "0.2.2",
+  "started": "2026-11-10T11:26:33"
+}
