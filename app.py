@@ -80,6 +80,7 @@ from balatro_analysis import (  # noqa: E402
     memory,
     metrics,
     plots,
+    purchases,
     replay,
     runcache,
     stats,
@@ -987,6 +988,94 @@ def filtered(r: Run, start: float, end: float, rounds: list[int] | None = None) 
 
 
 runs = [filtered(r, *ep_range, eval_rounds) for r in runs]
+RETEST = "retest"  # the replay tag of the test games again, with the current logging
+
+
+def item_runs() -> tuple[list[Run], list[str]]:
+    """The runs for item-level views (shop purchases, stickers): on the test games,
+    each run's ``retest`` replay instead when it has one (the same games, logged with
+    editions and stickers).  Also the names swapped."""
+    if split != loader.TEST_DIR:
+        return runs, []
+    shown = {r.name: r for r in runs}
+    out, swapped = [], []
+    for orig in train_runs:
+        if orig.name not in shown:
+            continue
+        retest = orig.split(f"{loader.REPLAY_DIR}/{RETEST}")
+        if retest is None:
+            out.append(shown[orig.name])
+        else:
+            out.append(filtered(retest, 0, float("inf")))
+            swapped.append(orig.name)
+    return out, swapped
+
+
+def item_runs_caption(swapped: list[str]) -> None:
+    if swapped:
+        st.caption(
+            f"From the **{RETEST}** replay (the same test games, logged with editions and "
+            "stickers) for " + ", ".join(swapped) + "."
+        )
+
+
+def shop_purchases() -> None:
+    """Buy rate of each kind of shop item, as balatro-shop-rl's special_buys.py."""
+    item_list, swapped = item_runs()
+    if not need(
+        [r for r in item_list if r.has("shops") and r.has("steps")] or None,
+        "shop and step logs",
+        no_steps,
+    ):
+        return
+    item_runs_caption(swapped)
+    if old := [r.name for r in item_list if not purchases.has_editions(r)]:
+        need_new(None, "editions, stickers or joker slots for " + ", ".join(old), version=17)
+    c1, c2 = st.columns(2)
+    by = c1.selectbox(
+        "Split by",
+        [None, "deck", "stake"],
+        format_func=lambda c: "Nothing" if c is None else names.column(c),
+        key="buys_by",
+    )
+    min_legal = c2.number_input(
+        "Hide rows with fewer legal listings than",
+        0,
+        value=purchases.MIN_LEGAL,
+        key="buys_min_legal",
+    )
+    rates = purchases.buy_rates(grouped(item_list), by)
+    if not need(rates, "shop listings"):
+        return
+    for part in sorted(rates["part"].unique(), key=str):
+        if by is not None:
+            st.markdown(f"**{names.column(by)}: {names.of(by)(part)}**")
+        table(purchases.rate_table(rates, part, int(min_legal)))
+    st.caption(
+        "Each listing (entering a shop, or a reroll) counts once per item. Buy rate = listings "
+        "bought ÷ listings where buying the item was legal (affordable, with room) at some "
+        "decision while it was on offer, per run, then mean ± SD over the group's runs; (n) = "
+        "legal listings pooled. Picks from packs aren't shop buys. Slots full: no free joker "
+        "slot at the listing. As balatro-shop-rl's scripts/special_buys.py."
+    )
+    st.download_button(
+        "Buy rates (CSV)",
+        data=rates.to_csv(index=False),
+        file_name="buy_rates.csv",
+        mime="text/csv",
+        key="dl_buy_rates",
+        on_click="ignore",
+    )
+
+
+def grouped(run_list: list[Run]) -> dict[str, list[Run]]:
+    """``run_list`` by group when the Overview compares groups, else one per run."""
+    group_map = stats.groups(run_list)
+    if st.session_state.get("compare_by") == "Groups" and len(group_map) < len(run_list):
+        return group_map
+    return {r.name: [r] for r in run_list}
+
+
 eval_runs = [filtered(r.eval, 0, float("inf")) for r in train_runs if r.eval is not None]
 run_names = [r.name for r in runs]
 by_name = {r.name: r for r in runs}
@@ -2002,6 +2091,7 @@ with tabs[3], table_budget():
                 "Economy vs outcome",
                 "Cash-out income",
                 "Shop offers",
+                "Shop purchases",
             ],
             key="econ_tab",
             on_change="rerun",
@@ -2230,6 +2320,10 @@ with tabs[3], table_budget():
                             ],
                             "econ-jk",
                         )
+
+        with sub[7]:
+            if sub[7].open:
+                shop_purchases()
 
 # --- Jokers ---------------------------------------------------------------
 with tabs[4], table_budget():
