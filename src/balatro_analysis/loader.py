@@ -184,6 +184,9 @@ EVAL_DIR = "eval"
 TEST_DIR = "test"
 # folders inside a run holding its other episodes, in the run's format: Run attributes
 SPLIT_DIRS = (EVAL_DIR, TEST_DIR)
+# <run>/replay/<tag>/: the run's test games played again (balatro-shop-rl's
+# scripts/replay_test.py), in the test/ format plus a replay.json; ``Run.replays``
+REPLAY_DIR = "replay"
 # what a run (and its eval/ folder) is read from, in the order it is read
 LOG_FILES = (
     "episodes.csv",
@@ -204,9 +207,21 @@ TABLES = ("steps", "rounds", "shops", "hands", "decks", "offers")
 Progress = Callable[[str, float], None]
 
 
+def split_owner(path: Path) -> Path | None:
+    """The run folder that ``path`` is a split of (an ``eval/``, ``test/`` or
+    ``replay/<tag>/`` folder inside a run), or None if it isn't one."""
+    if path.name in SPLIT_DIRS and (path.parent / "episodes.csv").is_file():
+        return path.parent
+    owner = path.parent.parent
+    if path.parent.name == REPLAY_DIR and (owner / "episodes.csv").is_file():
+        return owner
+    return None
+
+
 def is_split_dir(path: Path) -> bool:
-    """An ``eval/`` or ``test/`` folder inside a run (it belongs to that run)."""
-    return path.name in SPLIT_DIRS and (path.parent / "episodes.csv").is_file()
+    """An ``eval/``, ``test/`` or ``replay/<tag>/`` folder inside a run (it belongs
+    to that run, so it isn't a run of its own)."""
+    return split_owner(path) is not None
 
 
 def find_runs(root: str | Path) -> list[Path]:
@@ -463,8 +478,9 @@ def load_run(
     if name == ".":
         name = path.name
     config_path = path / "config.json"
-    if not config_path.is_file() and is_split_dir(path):
-        config_path = path.parent / "config.json"  # loaded on its own: use the run's config
+    owner = split_owner(path)
+    if not config_path.is_file() and owner is not None:
+        config_path = owner / "config.json"  # loaded on its own: use the run's config
     config = json.loads(config_path.read_text()) if config_path.is_file() else {}
     run = _load_tables(path, name, config, report)
     for split in SPLIT_DIRS:

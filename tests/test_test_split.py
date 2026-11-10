@@ -127,3 +127,27 @@ def test_app_without_test_defaults_to_training(eval_runs_dir):
 def test_every_tab_renders_in_every_phase(test_runs_dir, phase, tab):
     at = _app(test_runs_dir, phase, tab)
     assert not at.exception
+
+
+def _add_replay(run_dir: Path, tag: str = "retest") -> Path:
+    """A replay of ``run_dir``'s test games (balatro-shop-rl's replay_test.py)."""
+    out = run_dir / "replay" / tag
+    shutil.copytree(run_dir / "test", out)
+    return out
+
+
+def test_replay_dir_is_not_a_run(test_runs_dir):
+    _add_replay(test_runs_dir / "run_a")
+    assert [p.name for p in find_runs(test_runs_dir)] == ["run_a", "run_b"]
+
+
+def test_replay_dir_given_as_root_reads_the_runs_config(test_runs_dir):
+    replay = _add_replay(test_runs_dir / "run_a")
+    assert load_run(replay).config == load_run(test_runs_dir / "run_a").config
+
+
+def test_adding_a_replay_keeps_the_cached_run(test_runs_dir):
+    path = test_runs_dir / "run_a"
+    before = runcache.fingerprint(path)
+    _add_replay(path)
+    assert runcache.fingerprint(path) == before
