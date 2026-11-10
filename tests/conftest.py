@@ -93,6 +93,34 @@ def eval_runs_dir(tmp_path: Path) -> Path:
     return root
 
 
+def _with_test(run_dir: Path, ante_shift: int = 0) -> None:
+    """Give ``run_dir`` (already with eval/) a test/ folder, as balatro-shop-rl's
+    log_version 14 writes it: run_small's 3 episodes replayed once on TEST_0..2 by
+    the final policy (eval columns, one round after the last training episode)."""
+    e = pd.read_csv(RUNS_DIR / "run_small" / "episodes.csv")
+    e["seed"] = [f"TEST_{i}" for i in range(len(e))]
+    e["ante"] = e["ante"] + 2 + ante_shift
+    e["eval_round"] = 0
+    e["train_episodes"] = 10
+    (run_dir / "test").mkdir()
+    e.to_csv(run_dir / "test" / "episodes.csv", index=False)
+    for name in ("steps.jsonl", "rounds.jsonl", "shops.jsonl"):
+        shutil.copy(RUNS_DIR / "run_small" / name, run_dir / "test" / name)
+    for name in ("hands.jsonl", "decks.jsonl"):
+        shutil.copy(HANDS_DIR / name, run_dir / "test" / name)
+
+
+@pytest.fixture
+def test_runs_dir(tmp_path: Path) -> Path:
+    """Two runs with eval and test episodes on the same seeds; run_b's test games are
+    one ante better, as are its eval episodes."""
+    root = tmp_path / "test_runs"
+    for name, shift in (("run_a", 0), ("run_b", 1)):
+        _with_eval(root / name, ante_shift=shift)
+        _with_test(root / name, ante_shift=shift)
+    return root
+
+
 @pytest.fixture
 def group_runs_dir(tmp_path: Path) -> Path:
     """Group "a" (3 seeds, run_small's antes +0/+1/+2) and group "b" (2 seeds, +3/+4)."""

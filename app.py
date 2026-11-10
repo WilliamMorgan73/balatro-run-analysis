@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import functools
 import html
 import importlib
@@ -73,16 +74,19 @@ from balatro_analysis import (  # noqa: E402
     export,
     find,
     hands,
+    latex,
+    loader,
     memory,
     metrics,
     plots,
     replay,
     runcache,
     stats,
+    studies,
     theme,
 )
 from balatro_analysis.game_text import RARITY, GameText  # noqa: E402
-from balatro_analysis.loader import Run, find_runs, log_bytes  # noqa: E402
+from balatro_analysis.loader import Run, TableBudgetError, episodes_bytes, find_runs  # noqa: E402
 from balatro_analysis.names import Names, split_items  # noqa: E402
 from balatro_analysis.picker import PickerUnavailable, pick_directory  # noqa: E402
 from balatro_analysis.sprites import Sprites, find_balatro, game_archive  # noqa: E402
@@ -94,11 +98,32 @@ MIN_VISITS = 5  # money-curve points need at least this many shop visits
 MIN_LEGAL = 20  # preference needs an action to have been legal this often
 
 
-def cli_runs_dir() -> Path:
+def cli_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
+    # balatro-shop-rl's scripts/run_manifest.py: runs across folders, and studies
+    ap.add_argument("--manifest", type=Path, default=None)
     args, _ = ap.parse_known_args(sys.argv[1:])
-    return args.runs_dir
+    return args
+
+
+def cli_runs_dir() -> Path:
+    return cli_args().runs_dir
+
+
+def cli_manifest() -> str:
+    """The manifest given, else the runs folder's ``manifest.json`` if it has one."""
+    args = cli_args()
+    if args.manifest is not None:
+        return str(args.manifest)
+    default = args.runs_dir / studies.MANIFEST
+    return str(default) if default.is_file() else ""
+
+
+@st.cache_data(show_spinner=False)
+def cached_manifest(path: str, mtime: float) -> studies.Manifest:
+    """``studies.load_manifest``; mtime: re-read once it's regenerated."""
+    return studies.load_manifest(path)
 
 
 FILTERED_KEPT = 2  # filtered copies kept per run (each up to a full copy of it)
@@ -127,18 +152,31 @@ def run_locks() -> tuple[threading.Lock, dict[tuple, threading.Lock]]:
 
 @st.cache_resource
 def run_sizes() -> dict[str, int]:
-    """Each run's memory (by path) when last loaded, to judge before loading it
-    again whether it fits.  Runs never loaded are guessed from their logs."""
+    """Each run's memory (by path) when last loaded, without its tables, to judge
+    before loading it again whether it fits.  Runs never loaded are guessed from
+    their episodes.csv files."""
     return {}
 
 
+@st.cache_resource
+def shown_keys() -> set:
+    """Store keys of the runs the latest rerun shows: their tables are kept when
+    making room for another table, so a view over several runs doesn't thrash."""
+    return set()
+
+
 def run_size_guess(path: str) -> int:
-    """Memory the run at ``path`` will take once loaded."""
-    return run_sizes().get(path) or memory.estimate(log_bytes(path))
+    """Memory the run at ``path`` will take once loaded (tables are read later)."""
+    return run_sizes().get(path) or memory.estimate(episodes_bytes(path))
+
+
+def held_size(entry: tuple) -> int:
+    """Memory a stored run takes now: as loaded, plus the tables read since."""
+    return entry[2] + memory.estimate(entry[0].read_bytes())
 
 
 def _sub_runs(run: Run) -> list[Run]:
-    return [r for r in (run, run.eval) if r is not None]
+    return [r for r in (run, run.eval, run.test) if r is not None]
 
 
 def _served(store: collections.OrderedDict, key: tuple, pkg_mtime: float) -> Run:
@@ -158,11 +196,38 @@ def _make_room(store: collections.OrderedDict, budget: int | None, keep: set) ->
     never one in ``keep`` (the runs this rerun shows).  Guarded by the caller."""
     if budget is None:
         return
-    used = sum(v[2] for v in store.values())
+    used = sum(held_size(v) for v in store.values())
     for k in [k for k in store if k not in keep]:
         if used <= budget:
             break
-        used -= store.pop(k)[2]
+        used -= held_size(store.pop(k))
+
+
+def make_room_for_table(run: Run, table: str, nbytes: int) -> None:
+    """``loader.table_read_hook``: before a table is read, free what it needs from
+    the memory set aside for runs: first the tables of runs not shown, then those
+    runs.  Refuses (``TableBudgetError``) if the runs shown need more than that."""
+    budget = memory.run_budget()
+    if budget is None:
+        return
+    need = memory.estimate(nbytes)
+    store = run_store()
+    guard, _ = run_locks()
+    with guard:
+        used = sum(held_size(v) for v in store.values())
+        keep = shown_keys()
+        for k, v in list(store.items()):
+            if used + need <= budget:
+                return
+            if k not in keep and v[0].read_bytes():
+                used -= memory.estimate(v[0].unload())
+        _make_room(store, budget - need, keep)
+        used = sum(held_size(v) for v in store.values())
+    if used + need > budget:
+        raise TableBudgetError(run.name, table, need, budget)
+
+
+loader.table_read_hook = make_room_for_table
 
 
 def cached_run(
@@ -204,7 +269,7 @@ def cached_run(
         after = memory.process_rss()
         # what reading it took, unless that is less than its logs suggest (memory
         # freed meanwhile, or another session loading at the same time)
-        size = max(memory.estimate(log_bytes(path)), (after or 0) - (before or 0))
+        size = max(memory.estimate(episodes_bytes(path)), (after or 0) - (before or 0))
         if older:
             size = max(size, run_sizes().get(path, 0))  # extended in place: as before
         with guard:  # stored and unlocked together, so no session loads it twice
@@ -489,6 +554,8 @@ st.set_page_config(page_title="Balatro Run Analysis", layout="wide")
 
 if "runs_dir" not in st.session_state:
     st.session_state.runs_dir = str(cli_runs_dir())
+if "manifest_path" not in st.session_state:
+    st.session_state.manifest_path = cli_manifest()
 if "game_path" not in st.session_state:
     found = find_balatro()
     st.session_state.game_path = str(found) if found else ""
@@ -511,7 +578,14 @@ def settings(expanded: bool = False) -> None:
             help="On: names as shown in the game (for presenting). "
             "Off: exact keys like j_greedy_joker (for analysis).",
         )
-        st.text_input("Runs folder", key="runs_dir")
+        st.text_input(
+            "Run manifest",
+            key="manifest_path",
+            help="runs/manifest.json from balatro-shop-rl's scripts/run_manifest.py: runs "
+            "in several folders (runs/ and archives) and named studies. Empty: every run "
+            "under the runs folder below.",
+        )
+        st.text_input("Runs folder", key="runs_dir", help="Used when there's no manifest.")
         st.button("Browse…", on_click=browse_runs_dir, key="browse_runs")
         st.text_input("Balatro install", key="game_path", help="Folder or Balatro.exe/.love")
         st.button("Browse…", on_click=browse_game, key="browse_game")
@@ -523,18 +597,106 @@ def settings(expanded: bool = False) -> None:
             st.caption("Balatro not found: showing names only.")
 
 
+# The sidebar's Episodes switch: which of a run's episodes every tab shows (None:
+# the training episodes themselves), in the order offered; Test first, the default
+PHASE_SPLITS = {"Test": loader.TEST_DIR, "Evaluation": loader.EVAL_DIR, "Training": None}
+PHASE_CAPTIONS = {
+    "Test": "Results: the final policy on the fixed test games.",
+    "Evaluation": "Learning: greedy eval rounds during training. Not for ranking runs.",
+    "Training": "Diagnostics: the episodes trained on, with exploration.",
+}
+
+
+def episodes_shown() -> str:
+    """Which episodes the tabs show, for captions and the export's README."""
+    if test_mode:
+        return "the test games"
+    if eval_mode:
+        return f"eval round {eval_rounds[0]}" if eval_rounds else "every eval round"
+    return f"episodes {ep_range[0]} to {ep_range[1]}"
+
+
+def phase_switch(phases: list[str]) -> str:
+    """The sidebar's Episodes switch over ``phases``, with a line on what it's for."""
+    phase = st.segmented_control(
+        "Episodes",
+        phases,
+        required=True,
+        key="phase",
+        help="**Test**: the final policy on one fixed set of games (500 for balatro-shop-rl, "
+        "TEST_0..), the same for every run and never used during training. Report results "
+        "from these. **Evaluation**: greedy episodes on the fixed eval seeds every "
+        "--eval-every episodes, for learning curves; too few games per round to rank runs "
+        "on. **Training**: the episodes trained on, with exploration, for diagnostics. "
+        "Test and eval runs play the same games, so comparisons pair game by game.",
+    )
+    st.caption(PHASE_CAPTIONS[phase])
+    return phase
+
+
+NO_STUDY = "None"
+
+
+def study_picker(manifest: studies.Manifest, run_dirs: dict) -> str | None:
+    """The sidebar's Study picker: choosing a study picks its runs and compares
+    groups.  Returns the study chosen (None: none)."""
+
+    def pick() -> None:
+        chosen = st.session_state.study
+        if chosen != NO_STUDY:
+            st.session_state.picked_runs = [n for n in manifest.study_runs(chosen) if n in run_dirs]
+            st.session_state.compare_by = "Groups"
+
+    chosen = st.selectbox(
+        "Study",
+        [NO_STUDY, *manifest.studies],
+        key="study",
+        on_change=pick,
+        format_func=lambda s: manifest.studies.get(s, {}).get("title", s),
+        help="A comparison named in the manifest (balatro-shop-rl's analysis/studies.toml): "
+        "picks its groups' runs, and the Overview shows its tables, paired by seed.",
+    )
+    if chosen == NO_STUDY:
+        return None
+    for problem in manifest.study_problems(chosen):
+        st.caption(f":material/warning: {problem}")
+    return chosen
+
+
 # --- Sidebar --------------------------------------------------------------
 with st.sidebar:
     root = Path(st.session_state.runs_dir).expanduser()
-    run_paths = find_runs(root)
-    if not run_paths:
+    manifest = None
+    if mpath := st.session_state.manifest_path.strip():
+        try:
+            mfile = Path(mpath).expanduser()
+            manifest = cached_manifest(str(mfile), mfile.stat().st_mtime)
+        except (OSError, ValueError, KeyError) as e:
+            st.warning(f"Couldn't read the run manifest ({e}); listing the runs folder instead.")
+    if manifest is not None:
+        # runs named by the manifest, wherever they are; names are the run folders'
+        run_dirs = {
+            n: d for n in manifest.runs if (d := manifest.run_dir(n) / "episodes.csv").is_file()
+        }
+        run_dirs = {n: d.parent for n, d in run_dirs.items()}
+        source = str(manifest.path)
+        if missing := len(manifest.runs) - len(run_dirs):
+            st.caption(f"{missing} run(s) in the manifest not found on disk.")
+    else:
+        run_paths = find_runs(root)
+        run_dirs = {str(p.relative_to(root)) if p != root else p.name: p for p in run_paths}
+        source = str(root)
+    if not run_dirs:
         st.warning(f"No runs (folders with episodes.csv) under {root}. Set the runs folder below.")
         settings(expanded=True)
         st.stop()
-    run_dirs = {str(p.relative_to(root)) if p != root else p.name: p for p in run_paths}
+
+    def run_root(name: str) -> str:
+        """What the run's name is relative to (its own folder's parent for a manifest)."""
+        return str(run_dirs[name].parent) if manifest is not None else str(root)
 
     def run_mtime(path: Path) -> float:
-        files = [path / "episodes.csv", path / "eval" / "episodes.csv"]
+        files = [path / "episodes.csv", *(path / d / "episodes.csv" for d in loader.SPLIT_DIRS)]
         return max(f.stat().st_mtime for f in files if f.is_file())
 
     # Listing runs reads only their episodes.csv and config.json: only the runs
@@ -544,13 +706,17 @@ with st.sidebar:
     )
 
     # Every run starts selected; runs that appear later (Reload runs) are added
-    if st.session_state.get("_runs_root") != str(root):
+    if st.session_state.get("_runs_root") != source:
         st.session_state.picked_runs = list(run_dirs)
     else:
         known = st.session_state.get("_known_runs", [])
         kept = [n for n in st.session_state.get("picked_runs", []) if n in run_dirs]
         st.session_state.picked_runs = kept + [n for n in run_dirs if n not in known]
-    st.session_state._runs_root, st.session_state._known_runs = str(root), list(run_dirs)
+    st.session_state._runs_root, st.session_state._known_runs = source, list(run_dirs)
+
+    study = None
+    if manifest is not None and manifest.studies:
+        study = study_picker(manifest, run_dirs)
 
     shown_runs = find.find_runs_in(
         run_index,
@@ -598,17 +764,23 @@ with st.sidebar:
                 )
         st.dataframe(
             run_index.set_index("run")
-            .loc[shown_runs, ["mean_ante", "episodes", "group"]]
+            .loc[shown_runs, ["mean_ante", "scored_on", "episodes", "group"]]
             .rename(columns=names.column),
             column_config={names.column("mean_ante"): st.column_config.NumberColumn(format="%.2f")},
             height=min(36 * (len(shown_runs) + 1) + 2, 300),
+        )
+        st.caption(
+            "Mean ante and win rate are on the 500 test games where a run has them "
+            "(*Scored on* test), otherwise on its training episodes, which aren't comparable."
         )
         b1, b2, b3 = st.columns(3)
         b1.button(
             "Best per group",
             on_click=pick_runs,
             args=(find.best_per_group(run_index[run_index["run"].isin(shown_runs)]),),
-            help="The highest mean-ante run of each group shown (the best run if none are grouped)",
+            help="The highest mean-ante run of each group shown (the best run if none are "
+            "grouped). A diagnostic: picking the best seed by its score selects for luck, so "
+            "report groups, not the best run.",
         )
         b2.button("All shown", on_click=pick_runs, args=(shown_runs,))
         b3.button("Clear", on_click=pick_runs, args=([],))
@@ -620,7 +792,7 @@ with st.sidebar:
     # A progress bar over the picked runs' log bytes, only shown once a run is
     # actually read (from disk or the disk cache): runs already in memory never report.
     load_slot = st.empty()
-    run_bytes = {n: max(log_bytes(run_dirs[n]), 1) for n in picked}
+    run_bytes = {n: max(episodes_bytes(run_dirs[n]), 1) for n in picked}
     total_bytes = sum(run_bytes.values())
     bytes_before = 0
     held: set = set()  # store keys of the runs this rerun shows: kept while loading the rest
@@ -638,7 +810,9 @@ with st.sidebar:
 
         path = str(run_dirs[name])
         try:
-            run = cached_run(path, str(root), run_mtime(run_dirs[name]), pkg_mtime, progress, held)
+            run = cached_run(
+                path, run_root(name), run_mtime(run_dirs[name]), pkg_mtime, progress, held
+            )
         except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
             return None
         return None if run.episodes.empty else run
@@ -656,6 +830,9 @@ with st.sidebar:
             used += run_sizes().get(str(run_dirs[n]), size)
         bytes_before += run_bytes[n]
     load_slot.empty()
+    keys = shown_keys()
+    keys.clear()
+    keys.update(held)
 
     runs = [r for r in loaded.values() if r is not None]
     not_ready = [n for n, r in loaded.items() if r is None]
@@ -678,25 +855,21 @@ with st.sidebar:
         st.stop()
     train_runs = runs
 
-    # Eval episodes (greedy, fixed seeds) replace the training episodes in every tab
-    with_eval = [r for r in runs if r.eval is not None]
-    eval_mode = bool(with_eval) and (
-        st.segmented_control(
-            "Episodes",
-            ["Training", "Evaluation"],
-            default="Training",
-            required=True,
-            key="phase",
-            help="Evaluation: greedy episodes on the fixed eval seeds (--eval-every). "
-            "Every run plays the same eval games, so comparisons pair game by game. "
-            "Hand-by-hand replays are only recorded for these.",
-        )
-        == "Evaluation"
-    )
-    if eval_mode:
-        if missing := [r.name for r in runs if r.eval is None]:
-            st.caption("No eval episodes, not shown: " + ", ".join(missing))
-        runs = [r.eval for r in with_eval]
+    # Test or eval episodes (greedy, fixed games) replace the training episodes in
+    # every tab.  Test is the default: it's what results are reported on.
+    with_split = {s: [r for r in runs if getattr(r, s) is not None] for s in loader.SPLIT_DIRS}
+    phases = [p for p, s in PHASE_SPLITS.items() if s is None or with_split[s]]
+    if st.session_state.get("phase") not in phases:  # Test if any run has it, else Training
+        st.session_state.phase = phases[0] if phases[0] == "Test" else "Training"
+    phase = "Training"  # no switch when there are only training episodes
+    if len(phases) > 1:
+        phase = phase_switch(phases)
+    split = PHASE_SPLITS[phase]
+    eval_mode, test_mode = split == loader.EVAL_DIR, split == loader.TEST_DIR
+    if split is not None:
+        if missing := [r.name for r in runs if getattr(r, split) is None]:
+            st.caption(f"No {split} episodes, not shown: " + ", ".join(missing))
+        runs = [getattr(r, split) for r in with_split[split]]
 
     filter_summary = st.empty()  # filled once the filters below are read
     with st.expander("Filter", icon=":material/filter_list:"):
@@ -707,7 +880,9 @@ with st.sidebar:
 
         max_ep = int(max(r.episodes["episode"].max() for r in runs))
         eval_rounds = None
-        if eval_mode:
+        if test_mode:
+            ep_range = (0, max_ep)
+        elif eval_mode:
             ep_range = (0, max_ep)
             all_rounds = sorted({int(x) for r in runs for x in r.episodes["eval_round"]})
             eval_round = st.selectbox(
@@ -735,11 +910,7 @@ with st.sidebar:
             return f"all {plural}" if len(every) > 1 else f(every[0])
         return ", ".join(f(x) for x in chosen)
 
-    scope = (
-        (f"eval round {eval_rounds[0]}" if eval_rounds else "every eval round")
-        if eval_mode
-        else f"episodes {ep_range[0]} to {ep_range[1]}"
-    )
+    scope = episodes_shown()
     filter_summary.caption(
         f"Showing {_which(decks, all_decks, names.deck, 'decks')}, "
         f"{_which(stakes, all_stakes, names.stake, 'stakes')}, {scope}."
@@ -759,8 +930,9 @@ runs = [filtered(r, *ep_range, eval_rounds) for r in runs]
 eval_runs = [filtered(r.eval, 0, float("inf")) for r in train_runs if r.eval is not None]
 run_names = [r.name for r in runs]
 by_name = {r.name: r for r in runs}
-no_steps = any(r.steps is None for r in runs)
-no_rounds = any(r.rounds is None for r in runs)
+# whether runs have these logs, without reading them (tables are read when a view needs them)
+no_steps = any(not r.has("steps") for r in runs)
+no_rounds = any(not r.has("rounds") for r in runs)
 
 EPISODE_FILTERS = ("ep_decks", "ep_stakes", "ep_antes", "ep_outcome", "ep_jokers")
 TOP_JOKERS_DEFAULT = 15
@@ -891,7 +1063,8 @@ def iqm_table(by_group: bool) -> None:
         IQM_HELP
         + " 95% CI by stratified bootstrap: "
         + (
-            "where a group's runs played the same games (eval episodes), training seeds are "
+            "where a group's runs played the same games (test or eval episodes), training "
+            "seeds are "
             "redrawn within each game, as rliable does, so the interval reflects seed-to-seed "
             "variation; otherwise episodes are redrawn within each run."
             if by_group and shared
@@ -979,7 +1152,8 @@ def power_section(by_group: bool, baseline: str | None) -> None:
             "smallest difference found 80% of the time with this many seeds and games per seed. "
             "**Seeds needed**: per group, for your difference with this many games per seed; "
             "with unlimited games only seed-to-seed variation is left. Treats the groups as "
-            f"independent (no pairing on shared eval seeds), so it's conservative. {shown}."
+            f"independent (no pairing on shared test or eval games), so it's conservative. "
+            f"{shown}."
         )
         worst = pw.loc[pw["mde"].idxmax()]
         cols = st.columns(3)
@@ -1042,16 +1216,188 @@ def power_section(by_group: bool, baseline: str | None) -> None:
     table(pw, column_config={names.column(c): num for c in ("sd", "mde")})
 
 
+@contextlib.contextmanager
+def table_budget():
+    """Show a warning, not a traceback, when a tab needs more logs than fit in the
+    memory set aside for runs (``make_room_for_table``)."""
+    try:
+        yield
+    except TableBudgetError as e:
+        st.warning(
+            f"Not enough memory for this view: reading {e.table} for {e.run} (about "
+            f"{e.needed / 1e9:,.1f} GB) would go past the {e.budget / 1e9:,.1f} GB set aside "
+            f"for runs, with the logs of the other runs shown. Pick fewer runs, give the "
+            f"dashboard more memory (Slurm `--mem`), or set `{memory.ENV}` (GB).",
+            icon=":material/memory:",
+        )
+
+
+STUDY_GROUP_COLUMNS = {
+    "group": "Group",
+    "seeds": "Seeds",
+    "games": "Games",
+    "win_pct": "Win %",
+    "win_pct_sd": "Win % SD (seeds)",
+    "final_round": "Final round",
+    "ante": "Ante",
+    "ante_iqm": "IQM ante",
+    "ante_iqm_low": "IQM low",
+    "ante_iqm_high": "IQM high",
+}
+STUDY_PAIR_COLUMNS = {
+    "a": "A",
+    "b": "B",
+    "pairs": "Seed pairs",
+    "ante_diff": "Δ ante (A - B)",
+    "ante_low": "Δ ante low",
+    "ante_high": "Δ ante high",
+    "p": "p",
+    "a_better": "Seeds A ahead",
+    "win_diff": "Δ win (pts)",
+    "win_low": "Δ win low",
+    "win_high": "Δ win high",
+    "p_improvement": "P(A > B)",
+    "p_low": "P low",
+    "p_high": "P high",
+    "unpaired_seeds": "Seeds not paired",
+}
+
+
+def study_tables(study: str, spec: dict, runs: list[Run]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The study's group and pair tables over ``runs``, memoised on the first run
+    (filtered runs are kept between reruns, so this is computed once per filter)."""
+    key = f"study:{study}:" + ",".join(r.name for r in runs)
+    return stats.memo_value(
+        runs[0],
+        key,
+        lambda: (
+            studies.group_table(runs, spec.get("groups", [])),
+            studies.pair_table(runs, spec.get("pairs", [])),
+        ),
+    )
+
+
+def show_study_tables(groups: pd.DataFrame, pairs: pd.DataFrame, key: str) -> None:
+    f2, f3 = (
+        st.column_config.NumberColumn(format="%.2f"),
+        st.column_config.NumberColumn(format="%.3f"),
+    )
+    if len(groups):
+        st.dataframe(
+            groups.rename(columns=STUDY_GROUP_COLUMNS),
+            hide_index=True,
+            key=f"{key}_groups",
+            column_config={
+                c: (f3 if c.startswith("IQM") or c == "Ante" else f2)
+                for c in STUDY_GROUP_COLUMNS.values()
+                if c not in ("Group", "Seeds", "Games")
+            },
+        )
+    if len(pairs):
+        shown = (
+            pairs
+            if pairs["unpaired_seeds"].astype(bool).any()
+            else pairs.drop(columns="unpaired_seeds")
+        )
+        st.dataframe(
+            shown.rename(columns=STUDY_PAIR_COLUMNS),
+            hide_index=True,
+            key=f"{key}_pairs",
+            column_config={
+                c: (st.column_config.NumberColumn(format="%.3g") if c == "p" else f3)
+                for c in STUDY_PAIR_COLUMNS.values()
+                if c not in ("A", "B", "Seed pairs", "Seeds A ahead", "Seeds not paired")
+            },
+        )
+
+
+def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> None:
+    """The chosen study's results on the episodes shown: one row per group, then
+    each pair A - B matched by training seed; by ``split_by`` too if it has one."""
+    spec = manifest.studies[study]
+    in_study = set(spec.get("groups", []))
+    members = [r for r in runs if stats.group_of(r) in in_study]
+    st.subheader(spec.get("title", study))
+    if not members:
+        st.info("None of this study's runs are picked (or have these episodes).")
+        return
+    st.caption(
+        f"On {episodes_shown()}. Groups: mean over seeds (win % ± SD across seeds), and the "
+        "IQM of ante over seeds × games with a stratified-bootstrap 95% CI. Pairs: A - B "
+        "per training seed (same seed, same training games), Student-t 95% CI and p over "
+        "the seed pairs; P(A > B): the chance a game of A gets further than one of B, "
+        "rliable's, with a bootstrap 95% CI." + (f" {spec['note']}" if spec.get("note") else "")
+    )
+    if not test_mode:
+        st.warning(
+            "Not the test games: set **Episodes** to *Test* for the results to report.",
+            icon=":material/info:",
+        )
+    groups, pairs = study_tables(study, spec, members)
+    show_study_tables(groups, pairs, f"study_{study}")
+    tex = [
+        latex.study_groups(groups, latex.escape(spec.get("title", study)), f"{study}-groups"),
+        latex.study_pairs(
+            pairs, latex.escape(spec.get("title", study)) + ", paired by seed", f"{study}-pairs"
+        ),
+    ]
+    if col := spec.get("split_by"):
+        values = sorted({v for r in members if col in r.episodes for v in r.episodes[col]})
+        for v in values:
+            sub = [studies.where(r, col, v) for r in members]
+            sub = [r for r in sub if len(r.episodes)]
+            if not sub:
+                continue
+            with st.expander(
+                f"{names.column(col)}: {names.of(col)(v) if col in ('deck', 'stake') else v}"
+            ):
+                g, p = study_tables(f"{study}:{col}={v}", spec, sub)
+                show_study_tables(g, p, f"study_{study}_{v}")
+                tex.append(
+                    latex.study_pairs(
+                        p,
+                        latex.escape(f"{spec.get('title', study)}, {col} {v}"),
+                        f"{study}-pairs-{v}",
+                    )
+                )
+    c1, c2 = st.columns(2)
+    c1.download_button(
+        "Study tables (CSV)",
+        data=groups.to_csv(index=False) + "\n" + pairs.to_csv(index=False),
+        file_name=f"study_{study}.csv",
+        mime="text/csv",
+        key=f"dl_study_csv_{study}",
+        on_click="ignore",
+    )
+    c2.download_button(
+        "Study tables (LaTeX)",
+        data="\n".join(tex),
+        file_name=f"study_{study}.tex",
+        mime="text/x-tex",
+        key=f"dl_study_tex_{study}",
+        on_click="ignore",
+    )
+
+
 # --- Overview -------------------------------------------------------------
-with tabs[0]:
+with tabs[0], table_budget():
     if tabs[0].open:
         run_sheets()
-        if eval_mode:
+        if test_mode:
+            st.info(
+                "Showing **test games**: each run's final policy on the same fixed games, "
+                "never used in training. These are the results to report; the paired "
+                "comparison below matches runs game by game."
+            )
+        elif eval_mode:
             st.info(
                 "Showing **eval episodes** (greedy, fixed seeds), eval round "
                 f"{eval_rounds[0] if eval_rounds else 'all'}. Runs played the same games, "
-                "so the paired comparison below matches them game by game."
+                "so the paired comparison below matches them game by game. For learning "
+                "curves: with few games per round, rank runs on **Test** instead."
             )
+        if study is not None:
+            study_section(manifest, study, runs)
         group_map = stats.groups(runs)
         by_group = (
             len(group_map) < len(runs)
@@ -1185,10 +1531,10 @@ with tabs[0]:
                         if by_group
                         else "bootstrap for ante, Wilson for win rate"
                     )
-                    + "). To compare runs game by game on one round, set **Episodes** to "
-                    "*Evaluation* in the sidebar.",
+                    + "). For the learning curve only: results come from the test games "
+                    "(**Episodes** → *Test* in the sidebar).",
                 )
-        if not eval_mode:
+        if split is None:
             if by_group:
                 curve = stats.group_learning_curve(runs, window)
                 band_help = "Student-t 95% CI across the group's runs"
@@ -1226,7 +1572,7 @@ with tabs[0]:
                 st.json(r.config or {"note": "no config.json"}, expanded=False)
 
 # --- Decks ----------------------------------------------------------------
-with tabs[1]:
+with tabs[1], table_budget():
     if tabs[1].open:
         deck_table = metrics.by_deck(runs)
         if need(deck_table, "episodes for this selection"):
@@ -1251,7 +1597,7 @@ with tabs[1]:
             )
 
 # --- Actions --------------------------------------------------------------
-with tabs[2]:
+with tabs[2], table_budget():
     if tabs[2].open:
         summary = actions.visit_summary(runs)
         if len(summary):
@@ -1479,7 +1825,7 @@ with tabs[2]:
                     )
 
 # --- Economy --------------------------------------------------------------
-with tabs[3]:
+with tabs[3], table_budget():
     if tabs[3].open:
         kpi = economy.kpis(runs)
         if len(kpi):
@@ -1767,7 +2113,7 @@ with tabs[3]:
                         )
 
 # --- Jokers ---------------------------------------------------------------
-with tabs[4]:
+with tabs[4], table_budget():
     if tabs[4].open:
         top = st.slider("Top N jokers", 5, 40, TOP_JOKERS_DEFAULT)
         run_name = st.selectbox("Run", run_names, key="jokers_run")
@@ -1821,7 +2167,7 @@ with tabs[4]:
             )
 
 # --- Joker collection -----------------------------------------------------
-with tabs[5]:
+with tabs[5], table_budget():
     if tabs[5].open:
         game_text = cached_game_text(str(archive), pkg_mtime) if archive else None
         cards = joker_cards()
@@ -1848,7 +2194,7 @@ with tabs[5]:
             st.info("No jokers match.")
 
 # --- Rounds ---------------------------------------------------------------
-with tabs[6]:
+with tabs[6], table_budget():
     if tabs[6].open:
         st.subheader("Boss blinds")
         bosses = metrics.boss_stats(runs)
@@ -1876,12 +2222,13 @@ with tabs[6]:
 
 # --- Hands ----------------------------------------------------------------
 NO_HAND_LOG_TRAINING = (
-    "Hands are only recorded for evaluation episodes. Switch **Episodes** to "
-    "**Evaluation** in the sidebar to see them."
+    "Hands are only recorded for test and evaluation episodes. Switch **Episodes** to "
+    "**Test** or **Evaluation** in the sidebar to see them."
 )
 NO_HAND_LOG_EVAL = (
-    "These eval episodes have no hand log. Runs from balatro-shop-rl with log_version 7 "
-    "record every play and discard in eval/hands.jsonl; train again with --eval-every."
+    "These episodes have no hand log. Runs from balatro-shop-rl with log_version 7 "
+    "record every play and discard in eval/hands.jsonl (and test/hands.jsonl from "
+    "log_version 14); train again with --eval-every."
 )
 
 
@@ -1889,11 +2236,11 @@ def hand_log_missing(run_list: list[Run]) -> bool:
     """Say why there are no hands to show, if there aren't."""
     if any(hands.has_hands(r) for r in run_list):
         return False
-    st.info(NO_HAND_LOG_EVAL if eval_mode else NO_HAND_LOG_TRAINING, icon=":material/style:")
+    st.info(NO_HAND_LOG_TRAINING if split is None else NO_HAND_LOG_EVAL, icon=":material/style:")
     return True
 
 
-with tabs[7]:
+with tabs[7], table_budget():
     if tabs[7].open and not hand_log_missing(runs):
         if missing := [r.name for r in runs if not hands.has_hands(r)]:
             st.caption("No hand log, not shown: " + ", ".join(missing))
@@ -1962,7 +2309,7 @@ def card_uri(card) -> str | None:
     return sprites.card_uri(card) if sprites else None
 
 
-with tabs[8]:
+with tabs[8], table_budget():
     if not tabs[8].open:
         for key in ("run", "episode"):  # the link belongs to the explorer
             st.query_params.pop(key, None)
@@ -2210,11 +2557,7 @@ with tabs[8]:
 with export_area, st.expander("Export"):
     selection = {
         "runs": ", ".join(run_names),
-        "episodes": (
-            f"eval round {eval_rounds[0] if eval_rounds else 'all'}"
-            if eval_mode
-            else f"{ep_range[0]}-{ep_range[1]}"
-        ),
+        "episodes": episodes_shown(),
         "decks": ", ".join(decks),
         "stakes": ", ".join(stakes),
         "rolling window": window,
@@ -2230,6 +2573,7 @@ with export_area, st.expander("Export"):
             window,
             top,
             st.session_state.get("power_target", 0.25),
+            eval_runs,
         ),
         file_name=f"balatro_runs_{stamp}.zip",
         mime="application/zip",

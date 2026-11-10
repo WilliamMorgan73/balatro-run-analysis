@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from balatro_analysis import catalog
-from balatro_analysis.loader import Run, memo
+from balatro_analysis.loader import TABLES, UNREAD, Run, SubsetReader, memo
 
 BUY_ACTIONS = ("buy_card_0", "buy_card_1", "buy_pack_0", "buy_pack_1", "buy_voucher")
 SELL_JOKER_PREFIX = "sell_joker_"
@@ -30,8 +30,8 @@ def filter_episodes(
     """Restrict a run (all its tables) to episodes in ``[start, end]`` that were
     played on one of ``decks`` / ``stakes`` and, for eval episodes, in one of
     ``eval_rounds`` (None = no filter).  ``run.eval`` keeps every eval round and
-    gets the deck/stake filter only (the episode range is for training).  A filter
-    that keeps every episode returns ``run`` itself."""
+    ``run.test`` every game; both get the deck/stake filter only (the episode range is
+    for training).  A filter that keeps every episode returns ``run`` itself."""
     e = run.episodes
     keep = (e["episode"] >= start) & (e["episode"] <= end)
     if decks is not None:
@@ -41,27 +41,21 @@ def filter_episodes(
     if eval_rounds is not None and "eval_round" in e:
         keep &= e["eval_round"].isin(eval_rounds)
     filtered_eval = filter_episodes(run.eval, 0, np.inf, decks, stakes) if run.eval else None
-    if keep.all() and filtered_eval is run.eval:
+    filtered_test = filter_episodes(run.test, 0, np.inf, decks, stakes) if run.test else None
+    if keep.all() and filtered_eval is run.eval and filtered_test is run.test:
         return run  # nothing filtered out: no copy, and what it has memoised is reused
     episodes = set(e.loc[keep, "episode"])
-
-    def cut(df: pd.DataFrame | None) -> pd.DataFrame | None:
-        if df is None:
-            return None
-        return df[df["episode"].isin(episodes)].reset_index(drop=True)
-
-    return Run(
+    out = Run(
         name=run.name,
         path=run.path,
-        episodes=cut(run.episodes),
+        episodes=e[keep].reset_index(drop=True),
         config=run.config,
-        steps=cut(run.steps),
-        rounds=cut(run.rounds),
-        shops=cut(run.shops),
-        hands=cut(run.hands),
-        decks=cut(run.decks),
+        **dict.fromkeys(TABLES, UNREAD),  # cut from run's when first asked for
         eval=filtered_eval,
+        test=filtered_test,
     )
+    out._reader = SubsetReader(run, episodes)
+    return out
 
 
 def _concat(frames: list[pd.DataFrame]) -> pd.DataFrame:

@@ -175,33 +175,52 @@ RUN_SORTS = {
 }
 
 
+def _summary_episodes(path: Path) -> pd.DataFrame:
+    """Each episode's ante and outcome from ``path / episodes.csv``."""
+    text = loader._complete_lines(path / "episodes.csv")
+    e = pd.read_csv(io.StringIO(text), usecols=lambda c: c in ("ante", "max_ante", "won"))
+    if "max_ante" in e:  # as loader._fix_episodes: "ante" is the highest ante played
+        e["ante"] = e.pop("max_ante")
+    return e
+
+
 def run_summary(path: str | Path, name: str) -> Run | None:
     """What ``run_index`` needs of the run at ``path`` (its config, and each
-    episode's ante and outcome), read from ``config.json`` and ``episodes.csv``
-    only: listing runs doesn't load their logs.  None if it has no episodes yet
-    or can't be read."""
+    episode's ante and outcome, training and, if it has them, test), read from
+    ``config.json`` and the ``episodes.csv`` files only: listing runs doesn't load
+    their logs.  None if it has no episodes yet or can't be read."""
     path = Path(path)
     try:
         cfg = path / "config.json"
         config = json.loads(cfg.read_text()) if cfg.is_file() else {}
-        text = loader._complete_lines(path / "episodes.csv")
-        e = pd.read_csv(io.StringIO(text), usecols=lambda c: c in ("ante", "max_ante", "won"))
+        e = _summary_episodes(path)
     except (ValueError, OSError):  # e.g. EmptyDataError: training hasn't logged yet
         return None
     if e.empty:
         return None
-    if "max_ante" in e:  # as loader._fix_episodes: "ante" is the highest ante played
-        e["ante"] = e.pop("max_ante")
-    return Run(name=name, path=path, episodes=e, config=config)
+    run = Run(name=name, path=path, episodes=e, config=config)
+    test = path / loader.TEST_DIR
+    if (test / "episodes.csv").is_file():
+        try:
+            t = _summary_episodes(test)
+        except (ValueError, OSError):  # the test set still being played
+            t = pd.DataFrame()
+        if not t.empty:
+            run.test = Run(name=name, path=test, episodes=t, config=config)
+    return run
 
 
 def run_index(runs: dict[str, Run | None]) -> pd.DataFrame:
     """One row per run name (None: not loadable yet) with what the run list can
-    be sorted and filtered by.  A ``run_summary`` will do for each run."""
+    be sorted and filtered by.  A ``run_summary`` will do for each run.  Mean ante
+    and win rate are on the run's test games where it has them (``scored_on``
+    "test"), otherwise on its training episodes ("train"); ``episodes`` is always the
+    number trained."""
     rows = []
     for name, r in runs.items():
         e = r.episodes if r is not None else pd.DataFrame()
         c = r.config if r is not None else {}
+        scored = r.test.episodes if r is not None and r.test is not None else e
         rows.append(
             {
                 "run": name,
@@ -210,8 +229,9 @@ def run_index(runs: dict[str, Run | None]) -> pd.DataFrame:
                 "play_agent": c.get("play_agent") or "?",
                 "started": c.get("started") or "",
                 "episodes": len(e),
-                "mean_ante": e["ante"].mean() if len(e) else float("nan"),
-                "win_rate": e["won"].mean() if len(e) else float("nan"),
+                "mean_ante": scored["ante"].mean() if len(scored) else float("nan"),
+                "win_rate": scored["won"].mean() if len(scored) else float("nan"),
+                "scored_on": "test" if r is not None and r.test is not None else "train",
             }
         )
     return pd.DataFrame(rows)
@@ -244,7 +264,9 @@ def find_runs_in(
 
 
 def best_per_group(index: pd.DataFrame) -> list[str]:
-    """The highest mean-ante run of each group; with no groups, the best run."""
+    """The highest mean-ante run of each group; with no groups, the best run.
+    Ranked on test games where runs have them (``run_index``).  Still a diagnostic:
+    picking the best seed by its score selects for luck."""
     scored = index.dropna(subset=["mean_ante"])
     if scored.empty:
         return []

@@ -10,8 +10,17 @@ A run is a directory containing ``episodes.csv``, and optionally
 Runs made with ``--eval-every`` also have an ``eval/`` folder in the same format
 (greedy episodes on fixed seeds, with ``eval_round`` and ``train_episodes``
 columns).  It is loaded as ``Run.eval`` rather than listed as a run of its own.
+Runs from balatro-shop-rl's log_version 14 also end with a ``test/`` folder: one fixed
+set of games (``TEST_0``..) played once by the final policy, the same for every run.
+It is loaded as ``Run.test``: the results to report, where eval is the learning curve.
 From ``log_version`` 7, ``eval/`` also has ``hands.jsonl`` (every play and
 discard) and ``decks.jsonl`` (the deck at the start of each blind).
+
+Loading a run reads only its ``episodes.csv`` files (and config).  Each JSONL log
+(``steps``, ``rounds``, ...) is read the first time something asks for it
+(``run.steps``), by the run's ``TableReader``, and kept: a view that only needs
+episodes never reads the hundreds of MB of training steps.  ``table_read_hook`` (if
+set) hears about each read first, so a caller can make room for it.
 
 The logs only ever grow, so a run loaded earlier can be brought up to date by
 reading just what was appended since (``extend_run``).
@@ -22,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,18 +45,67 @@ import pyarrow.json as pj
 UNKNOWN = "unknown"
 
 
-@dataclass
+class _Unread:
+    """Passed for a table to leave it unread: ``Run(..., steps=UNREAD)``."""
+
+    def __repr__(self) -> str:
+        return "UNREAD"
+
+
+UNREAD = _Unread()
+# serialises table reads, so two sessions asking for the same table read it once
+_READ_LOCK = threading.RLock()
+# called as hook(run, table, file_bytes) before a table is read from disk (not for
+# a filtered run cutting its parent's table); may raise to refuse the read
+table_read_hook: Callable[[Run, str, int], None] | None = None
+
+
+class TableBudgetError(MemoryError):
+    """A table wasn't read because it wouldn't fit in the memory set aside for runs."""
+
+    def __init__(self, run: str, table: str, needed: int, budget: int):
+        super().__init__(
+            f"{run}: {table} ({needed / 1e9:.1f} GB) doesn't fit in {budget / 1e9:.1f} GB"
+        )
+        self.run, self.table, self.needed, self.budget = run, table, needed, budget
+
+
+class _LazyTable:
+    """A ``Run`` table read on first access through the run's ``_reader``.  As a
+    dataclass field: defaults to None (no table); ``UNREAD`` leaves it to be read."""
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.table, self.attr = name, f"_{name}_df"
+
+    def __get__(self, obj: Run | None, owner: type | None = None):
+        if obj is None:
+            return None  # the field's default
+        try:
+            return obj.__dict__[self.attr]
+        except KeyError:
+            return obj._read_table(self.table)
+
+    def __set__(self, obj: Run, value) -> None:
+        if value is UNREAD:
+            obj.__dict__.pop(self.attr, None)
+        else:
+            obj.__dict__[self.attr] = value
+
+
+@dataclass(eq=False, repr=False)
 class Run:
     name: str
     path: Path
     episodes: pd.DataFrame
     config: dict = field(default_factory=dict)
-    steps: pd.DataFrame | None = None
-    rounds: pd.DataFrame | None = None
-    shops: pd.DataFrame | None = None
-    hands: pd.DataFrame | None = None  # eval/ only, log_version 7
-    decks: pd.DataFrame | None = None  # eval/ only, log_version 7
+    steps: pd.DataFrame | None = _LazyTable()
+    rounds: pd.DataFrame | None = _LazyTable()
+    shops: pd.DataFrame | None = _LazyTable()
+    hands: pd.DataFrame | None = _LazyTable()  # eval/ and test/ only, log_version 7
+    decks: pd.DataFrame | None = _LazyTable()  # eval/ and test/ only, log_version 7
+    offers: pd.DataFrame | None = _LazyTable()  # eval/ and test/ only, log_version 12
     eval: Run | None = None  # greedy episodes on the fixed eval seeds, if logged
+    test: Run | None = None  # the final policy on the fixed test games, if logged
     # frames derived from this run's tables (see ``memo``), so the tables must not
     # change once read; a filtered or replace()d run starts empty
     _memo: dict = field(default_factory=dict, init=False, repr=False, compare=False)
@@ -55,6 +114,62 @@ class Run:
     _sources: dict = field(default_factory=dict, init=False, repr=False, compare=False)
     # what the run was loaded from, set by ``runcache``
     _fingerprint: tuple = field(default=(), init=False, repr=False, compare=False)
+    # reads the tables left ``UNREAD`` (a ``TableReader``); None: there are none
+    _reader: TableReader | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __repr__(self) -> str:
+        return f"Run({self.name!r}, {len(self.episodes)} episodes, read: {self.loaded()})"
+
+    def loaded(self) -> list[str]:
+        """The tables read (or given) so far."""
+        return [t for t in TABLES if f"_{t}_df" in self.__dict__]
+
+    def has(self, table: str) -> bool:
+        """Whether the run has ``table``, without reading it if it hasn't been."""
+        if f"_{table}_df" in self.__dict__:
+            return self.__dict__[f"_{table}_df"] is not None
+        return self._reader is not None and self._reader.exists(table)
+
+    def table_bytes(self, table: str) -> int:
+        """Size of ``table``'s log on disk (0 if none, or not read from disk)."""
+        return self._reader.size(table) if self._reader is not None else 0
+
+    def read_bytes(self) -> int:
+        """Log bytes behind the tables read so far, its eval and test runs' too:
+        what they take in memory, roughly (``memory.estimate``)."""
+        own = sum(src.end for t, src in self._sources.items() if f"_{t}_df" in self.__dict__)
+        return own + sum(s.read_bytes() for s in self.splits())
+
+    def splits(self) -> list[Run]:
+        return [r for r in (getattr(self, d) for d in SPLIT_DIRS) if r is not None]
+
+    def unload(self) -> int:
+        """Drop the tables read from disk (they are read again when next asked
+        for), here and in the eval and test runs, and everything memoised on
+        them.  Returns the log bytes freed."""
+        freed = 0
+        if self._reader is not None and self._reader.from_disk:
+            with _READ_LOCK:
+                for t in self.loaded():
+                    src = self._sources.pop(t, None)
+                    freed += src.end if src is not None else 0
+                    setattr(self, t, UNREAD)
+                self._memo.clear()
+        return freed + sum(s.unload() for s in self.splits())
+
+    def _read_table(self, table: str) -> pd.DataFrame | None:
+        if self._reader is None:
+            return None
+        with _READ_LOCK:
+            if f"_{table}_df" in self.__dict__:  # read by another thread meanwhile
+                return self.__dict__[f"_{table}_df"]
+            if self._reader.from_disk and table_read_hook is not None:
+                table_read_hook(self, table, self._reader.size(table))
+            df, source = self._reader.read(table)
+            setattr(self, table, df)
+            if source is not None:
+                self._sources[table] = source
+            return df
 
 
 def memo(run: Run, key: str, build: Callable[[], pd.DataFrame]) -> pd.DataFrame:
@@ -66,6 +181,9 @@ def memo(run: Run, key: str, build: Callable[[], pd.DataFrame]) -> pd.DataFrame:
 
 
 EVAL_DIR = "eval"
+TEST_DIR = "test"
+# folders inside a run holding its other episodes, in the run's format: Run attributes
+SPLIT_DIRS = (EVAL_DIR, TEST_DIR)
 # what a run (and its eval/ folder) is read from, in the order it is read
 LOG_FILES = (
     "episodes.csv",
@@ -75,18 +193,20 @@ LOG_FILES = (
     "shops.jsonl",
     "hands.jsonl",
     "decks.jsonl",
+    "offers.jsonl",
 )
 
-TABLES = ("steps", "rounds", "shops", "hands", "decks")  # the JSONL logs, as Run fields
+# the JSONL logs, as Run fields
+TABLES = ("steps", "rounds", "shops", "hands", "decks", "offers")
 
 # ``progress(label, fraction)``: called before each file of a run is read, with
 # the fraction of the run's log bytes already read
 Progress = Callable[[str, float], None]
 
 
-def is_eval_dir(path: Path) -> bool:
-    """An ``eval/`` folder inside a run (it belongs to that run)."""
-    return path.name == EVAL_DIR and (path.parent / "episodes.csv").is_file()
+def is_split_dir(path: Path) -> bool:
+    """An ``eval/`` or ``test/`` folder inside a run (it belongs to that run)."""
+    return path.name in SPLIT_DIRS and (path.parent / "episodes.csv").is_file()
 
 
 def find_runs(root: str | Path) -> list[Path]:
@@ -97,7 +217,7 @@ def find_runs(root: str | Path) -> list[Path]:
     return sorted(
         p.parent
         for p in root.rglob("episodes.csv")
-        if p.parent == root or not is_eval_dir(p.parent)
+        if p.parent == root or not is_split_dir(p.parent)
     )
 
 
@@ -285,9 +405,23 @@ def mask_actions(mask: int) -> list[int]:
 
 
 def log_files(path: str | Path) -> list[Path]:
-    """The log files a run at ``path`` is read from (its own and its eval/ folder's)."""
+    """The log files a run at ``path`` is read from (its own, its eval/ and test/ folders')."""
     path = Path(path)
-    return [d / n for d in (path, path / EVAL_DIR) for n in LOG_FILES if (d / n).is_file()]
+    dirs = (path, *(path / d for d in SPLIT_DIRS))
+    return [d / n for d in dirs for n in LOG_FILES if (d / n).is_file()]
+
+
+def episodes_bytes(path: str | Path) -> int:
+    """Size of the ``episodes.csv`` files of the run at ``path`` (its own, eval/ and
+    test/): what loading it reads, before any table is asked for."""
+    path = Path(path)
+    total = 0
+    for d in (path, *(path / s for s in SPLIT_DIRS)):
+        try:
+            total += (d / "episodes.csv").stat().st_size
+        except OSError:
+            pass
+    return total
 
 
 def log_bytes(path: str | Path) -> int:
@@ -329,11 +463,12 @@ def load_run(
     if name == ".":
         name = path.name
     config_path = path / "config.json"
-    if not config_path.is_file() and is_eval_dir(path):
+    if not config_path.is_file() and is_split_dir(path):
         config_path = path.parent / "config.json"  # loaded on its own: use the run's config
     config = json.loads(config_path.read_text()) if config_path.is_file() else {}
     run = _load_tables(path, name, config, report)
-    run.eval = _load_eval(run, None, report)
+    for split in SPLIT_DIRS:
+        setattr(run, split, _load_split(run, split, None, report))
     return run
 
 
@@ -350,16 +485,20 @@ def extend_run(run: Run, progress: Progress | None = None) -> Run:
             progress(f"new data: {file.relative_to(run.path)}", 0.0)
 
     out = _load_tables(run.path, run.name, run.config, report, previous=run)
-    out.eval = _load_eval(out, run.eval, report)
+    for split in SPLIT_DIRS:
+        setattr(out, split, _load_split(out, split, getattr(run, split), report))
     return out
 
 
-def _load_eval(run: Run, previous: Run | None, report: Callable[[Path], None]) -> Run | None:
-    path = run.path / EVAL_DIR
+def _load_split(
+    run: Run, split: str, previous: Run | None, report: Callable[[Path], None]
+) -> Run | None:
+    """The run's ``eval/`` or ``test/`` episodes, or None if it has none (yet)."""
+    path = run.path / split
     if not (path / "episodes.csv").is_file():
         return None
     out = _load_tables(path, run.name, run.config, report, previous=previous)
-    return None if out.episodes.empty else out  # first eval round still being played
+    return None if out.episodes.empty else out  # first eval round / test still being played
 
 
 def _load_tables(
@@ -375,22 +514,85 @@ def _load_tables(
     episodes = _fix_episodes(
         pd.read_csv(io.StringIO(_complete_lines(path / "episodes.csv"))), config
     )
-    tables, sources = {}, {}
-    for table in TABLES:
+    run = Run(
+        name=name, path=path, episodes=episodes, config=config, **dict.fromkeys(TABLES, UNREAD)
+    )
+    run._reader = (
+        previous._reader.at(path, config)
+        if previous is not None and previous._reader
+        else TableReader(path, config)
+    )
+    if previous is None:
+        return run
+    # the tables ``previous`` had read: read on from where it stopped, or again whole
+    for table in previous.loaded():
+        if table not in previous._sources:
+            continue
         file = path / f"{table}.jsonl"
         report(file)
-        got = None
-        if previous is not None and table in previous._sources:
-            got = _read_on(file, getattr(previous, table), previous._sources[table], table, config)
+        got = _read_on(
+            file, previous.__dict__[f"_{table}_df"], previous._sources[table], table, config
+        )
         if got is None:
-            df, src = _read_jsonl(file)
-            got = (_fix_table(table, df, config) if df is not None else None), src
-        tables[table], source = got
-        if source is not None:
-            sources[table] = source
-    run = Run(name=name, path=path, episodes=episodes, config=config, **tables)
-    run._sources = sources
+            got = run._reader.read(table)
+        setattr(run, table, got[0])
+        if got[1] is not None:
+            run._sources[table] = got[1]
     return run
+
+
+@dataclass(frozen=True)
+class TableReader:
+    """Reads a run's JSONL logs (in ``path``) one table at a time, for ``Run``'s
+    lazy tables.  Picklable, so a cached run keeps it."""
+
+    path: Path
+    config: dict = field(default_factory=dict, hash=False, compare=False)
+
+    from_disk = True  # reads files (a table read is worth making room for)
+
+    def at(self, path: Path, config: dict) -> TableReader:
+        """The same kind of reader for another folder."""
+        return TableReader(path, config)
+
+    def file(self, table: str) -> Path:
+        return self.path / f"{table}.jsonl"
+
+    def exists(self, table: str) -> bool:
+        return self.file(table).is_file()
+
+    def size(self, table: str) -> int:
+        try:
+            return self.file(table).stat().st_size
+        except OSError:
+            return 0
+
+    def read(self, table: str) -> tuple[pd.DataFrame | None, Source | None]:
+        """``(frame, how far the file was read)``; ``(None, None)`` without a log."""
+        df, source = _read_jsonl(self.file(table))
+        return (_fix_table(table, df, self.config) if df is not None else None), source
+
+
+class SubsetReader:
+    """A filtered run's tables: its parent's, cut to ``episodes`` when first asked
+    for, so filtering a run reads nothing the views don't use."""
+
+    from_disk = False
+
+    def __init__(self, parent: Run, episodes: set):
+        self.parent, self.episodes = parent, episodes
+
+    def exists(self, table: str) -> bool:
+        return self.parent.has(table)
+
+    def size(self, table: str) -> int:
+        return 0
+
+    def read(self, table: str) -> tuple[pd.DataFrame | None, Source | None]:
+        df = getattr(self.parent, table)
+        if df is None:
+            return None, None
+        return df[df["episode"].isin(self.episodes)].reset_index(drop=True), None
 
 
 def _read_on(file: Path, cached: pd.DataFrame | None, source: Source, table: str, config: dict):

@@ -270,15 +270,24 @@ def test_extend_run_leaves_the_old_run_alone(tmp_path):
     assert len(later.steps) > lengths["steps"]
 
 
+def _read_all(run):
+    """Read every table of ``run`` and its eval/test runs (tables are lazy), as a
+    dashboard that has shown them would have: those are the ones read on."""
+    for r in (run, *run.splits()):
+        for t in TABLES:
+            getattr(r, t)
+    return run
+
+
 @pytest.mark.parametrize("source", [V5 / "run_v5", RUNS / "run_small"])
 def test_appended_logs_are_not_read_again(tmp_path, monkeypatch, source):
     root = _training_copy(tmp_path, source)
     run_dir = root / source.name
     full = _cut(run_dir, 0.5)
-    early = load_run(run_dir, root)
+    early = _read_all(load_run(run_dir, root))
     for f, data in full.items():
         f.write_bytes(data)
-    fresh = load_run(run_dir, root)
+    fresh = _read_all(load_run(run_dir, root))
 
     real = loader._read_jsonl
 
@@ -300,10 +309,10 @@ def test_unchanged_pandas_log_is_not_read_again(tmp_path, monkeypatch):
     for name in ("hands.jsonl", "decks.jsonl"):  # eval hands complete already
         f = run_dir / "eval" / name
         f.write_bytes(full.pop(f))
-    early = load_run(run_dir, root)
+    early = _read_all(load_run(run_dir, root))
     for f, data in full.items():
         f.write_bytes(data)
-    fresh = load_run(run_dir, root)
+    fresh = _read_all(load_run(run_dir, root))
     real = loader._read_jsonl
 
     def refuse(path):
