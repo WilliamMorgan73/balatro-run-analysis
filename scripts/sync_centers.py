@@ -6,6 +6,9 @@ positions and starting configs for jokers, decks, consumables, vouchers and
 packs, and blind names, chip positions, colours and rewards (no game art).
 
     uv run python scripts/sync_centers.py [path/to/jackdaw/engine/data]
+
+Without a path, it reads the jackdaw installed in ../balatro-shop-rl's environment
+(``uv sync`` there first), the engine its runs were played on.
 """
 
 import json
@@ -13,14 +16,34 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SRC = ROOT.parent / "jackdaw-balatro" / "jackdaw" / "engine" / "data"
 OUT = ROOT / "src" / "balatro_analysis" / "data"
+JACKDAW_DATA = Path("jackdaw") / "engine" / "data"
+
+
+def default_src() -> Path:
+    """jackdaw's data in balatro-shop-rl's virtualenv (any Python version)."""
+    venv = ROOT.parent / "balatro-shop-rl" / ".venv"
+    found = sorted(
+        [
+            *venv.glob(f"lib/python3*/site-packages/{JACKDAW_DATA}"),
+            *venv.glob(f"Lib/site-packages/{JACKDAW_DATA}"),  # Windows layout
+        ]
+    )
+    if not found:
+        sys.exit(
+            f"jackdaw's data not found under {venv}: run `uv sync` in balatro-shop-rl, "
+            "or pass the path to jackdaw/engine/data"
+        )
+    return found[-1]  # the newest Python if there are several
+
+
 SPRITE_SETS = {"Joker", "Back", "Tarot", "Planet", "Spectral", "Voucher", "Booster"}
 ITEM_SETS = {"Tarot", "Planet", "Spectral", "Voucher", "Booster"}
 
 
 def main() -> None:
-    src = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SRC
+    src = Path(sys.argv[1]) if len(sys.argv) > 1 else default_src()
+    print(f"reading {src}")
 
     centers = {}
     for key, c in sorted(json.loads((src / "centers.json").read_text()).items()):
