@@ -10,7 +10,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from balatro_analysis.cards import joker_keys, joker_states, parse_cards
+from balatro_analysis.cards import (
+    HeldJoker,
+    held_jokers,
+    joker_keys,
+    joker_states,
+    parse_cards,
+    parse_joker,
+)
 from balatro_analysis.loader import Run, memo
 from balatro_analysis.metrics import _concat, blind_type, episode_rounds
 
@@ -95,6 +102,29 @@ def blind_jokers(run: Run, episode: int, round_: int) -> tuple[list[str], bool, 
             states = joker_states(_as_list(states)) or [None] * len(keys)
             return keys, False, states
     return [], False, []
+
+
+def blind_held(run: Run, episode: int, round_: int, keys: list[str]) -> list[HeldJoker]:
+    """Editions and stickers (log_version 17) of the jokers ``blind_jokers`` shows
+    (``keys``): from the blind's first play or discard, else from the last shop
+    decision before the blind when it held the same jokers; plain keys otherwise."""
+    if has_hands(run) and "jokers" in run.hands:
+        h = run.hands[(run.hands["episode"] == episode) & (run.hands["round"] == round_)]
+        if len(h):
+            first = h.sort_values("hand_no").iloc[0]["jokers"]
+            if isinstance(first, list):
+                held = [parse_joker(v) for v in first]
+                if [j.key for j in held] == list(keys):
+                    return held
+    steps = run.steps
+    if steps is not None and "jokers_extra" in steps:
+        before = steps[(steps["episode"] == episode) & (steps["round"] < round_)]
+        if len(before):
+            last = before.sort_values("step").iloc[-1]
+            held = held_jokers(last["jokers_before"], last["jokers_extra"])
+            if [j.key for j in held] == list(keys):
+                return held
+    return [HeldJoker(k) for k in keys]
 
 
 def _as_list(value):

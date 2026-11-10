@@ -17,7 +17,15 @@ from collections.abc import Callable
 import pandas as pd
 
 from balatro_analysis import catalog
-from balatro_analysis.cards import RANKS, SUIT_SYMBOLS, PlayingCard, joker_state, state_label
+from balatro_analysis.cards import (
+    EDITION_NAMES,
+    RANKS,
+    SUIT_SYMBOLS,
+    PlayingCard,
+    extra_badges,
+    joker_state,
+    state_label,
+)
 from balatro_analysis.names import Names
 from balatro_analysis.theme import CHIPS, INSET, LIP, MONEY, MULT, PANEL, PLAY, TABLE, WIN
 
@@ -336,12 +344,25 @@ def _slot(item: pd.Series, names: Names, icon_uri: IconUri) -> str:
         if uri
         else f'<div class="rp-noart">{_esc(name)}</div>'
     )
-    cls = " ".join(c for c in ("rp-slot", item["kind"], "bought" if item["bought"] else "") if c)
-    label = f"{name} (bought)" if item["bought"] else name
+    ed = item.get("edition")
+    ed = ed if isinstance(ed, str) else None
+    stickers = item.get("stickers")
+    stickers = tuple(stickers) if isinstance(stickers, list | tuple) else ()
+    cls = " ".join(
+        c
+        for c in ("rp-slot", item["kind"], "bought" if item["bought"] else "", ed and f"ed-{ed}")
+        if c
+    )
+    extra = [EDITION_NAMES.get(ed, ed)] if ed else []
+    extra += [s.title() for s in stickers]
+    label = (
+        name + (f" ({', '.join(extra)})" if extra else "") + (" (bought)" if item["bought"] else "")
+    )
+    badges = extra_badges(ed, stickers)
     return (
         f'<div class="{cls}" title="{_esc(label)}">{art}'
         f'<span class="rp-price rp-px">${_esc(item["cost"])}</span>'
-        f"<span>{_esc(name)}</span></div>"
+        f"<span>{_esc(name)}</span>{badges}</div>"
     )
 
 

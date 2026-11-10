@@ -239,17 +239,24 @@ def grid_html(cards: list[JokerCard], names: Names, prefix: str = "jk") -> str:
 
 
 def mini_grid_html(
-    cards: list[JokerCard], names: Names, prefix: str, captions: list[str] | None = None
+    cards: list[JokerCard],
+    names: Names,
+    prefix: str,
+    captions: list[str] | None = None,
+    dimmed: list[bool] | None = None,
 ) -> str:
-    """Compact joker tiles (art, name, optional caption HTML) that open the same modal."""
+    """Compact joker tiles (art, name, optional caption HTML) that open the same
+    modal; ``dimmed`` tiles are greyed out (an expired Perishable)."""
     ids = [details.dialog_id(prefix, f"{n}-{c.key}") for n, c in enumerate(cards)]
     captions = captions or [""] * len(cards)
+    dimmed = dimmed or [False] * len(cards)
     tiles = []
-    for c, i, cap in zip(cards, ids, captions, strict=True):
+    for c, i, cap, dim in zip(cards, ids, captions, dimmed, strict=True):
         title = names.item(c.key)
         sub = f'<div class="dt-sub">{cap}</div>' if cap else ""
+        cls = "dt-mini dt-expired" if dim else "dt-mini"
         inner = (
-            f'<div class="dt-mini">{details.art_html(c.icon, c.name, 71, 95)}'
+            f'<div class="{cls}">{details.art_html(c.icon, c.name, 71, 95)}'
             f'<div class="dt-name">{html.escape(title)}</div>{sub}</div>'
         )
         tiles.append(details.tile_html(i, inner, title))

@@ -34,6 +34,7 @@ MODAL_CSS = """
   display:flex;flex-direction:column;align-items:center;gap:4px;color:#fff;
   font-family:system-ui,sans-serif;box-shadow:0 3px 0 #1d282e;text-align:center}
 .dt-mini img{image-rendering:pixelated}
+.dt-mini.dt-expired img,.dt-mini.dt-expired .dt-noart{filter:grayscale(1) brightness(.6)}
 .dt-mini .dt-name{font-weight:800;font-size:14px;line-height:1.15}
 .dt-mini .dt-sub{font-size:12px;opacity:.85;line-height:1.35}
 .dt-mini .dt-sub b{color:#ff9a00}

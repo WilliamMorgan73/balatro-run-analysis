@@ -84,6 +84,7 @@ from balatro_analysis import (  # noqa: E402
     replay,
     runcache,
     stats,
+    stickers,
     studies,
     theme,
 )
@@ -515,12 +516,20 @@ def _cell_list(value) -> list | None:
     return list(value)
 
 
-def joker_grid(items: list[tuple[str, str]], prefix: str) -> None:
-    """(joker key, caption HTML) pairs as clickable tiles that open each joker's modal."""
+def joker_grid(items: list[tuple[str, str]], prefix: str, dimmed: list[bool] | None = None) -> None:
+    """(joker key, caption HTML) pairs as clickable tiles that open each joker's
+    modal; ``dimmed`` ones (an expired Perishable) greyed out."""
     by_key = {c.key: c for c in joker_cards()}
-    shown = [(by_key[k], cap) for k, cap in items if k in by_key]
+    dimmed = dimmed or [False] * len(items)
+    shown = [(by_key[k], cap, d) for (k, cap), d in zip(items, dimmed, strict=True) if k in by_key]
     modal_html(
-        collection.mini_grid_html([c for c, _ in shown], names, prefix, [cap for _, cap in shown])
+        collection.mini_grid_html(
+            [c for c, _, _ in shown],
+            names,
+            prefix,
+            [cap for _, cap, _ in shown],
+            [d for _, _, d in shown],
+        )
     )
 
 
@@ -1065,6 +1074,46 @@ def shop_purchases() -> None:
         mime="text/csv",
         key="dl_buy_rates",
         on_click="ignore",
+    )
+
+
+def sticker_panel() -> None:
+    """Eternal and Perishable jokers (stakes 4 and 7, log_version 17), per stake:
+    buy rates and what the agent does with them, as balatro-shop-rl's stickers.py."""
+    st.subheader("Stickers: Eternal and Perishable jokers")
+    item_list, swapped = item_runs()
+    with_steps = [r for r in item_list if r.has("steps")]
+    if not need(with_steps or None, "shop decisions", no_steps):
+        return
+    if not any(stickers.has_stickers(r) for r in with_steps):
+        need_new(None, "stickers on held jokers", version=17)
+        return
+    item_runs_caption(swapped)
+    sets = grouped([r for r in with_steps if stickers.has_stickers(r)])
+    behaviour = stickers.behaviour_table(sets)
+    rates = purchases.buy_rates(sets, "stake")
+    if not need(behaviour, "shop decisions"):
+        return
+    for stake in behaviour["stake"].unique():
+        st.markdown(f"**{names.column('stake')}: {names.stake(stake)}**")
+        buys = purchases.rate_table(rates, stake, min_legal=0)
+        if len(buys):
+            buys = buys[buys["item"].isin(stickers.BUY_CATEGORIES)]
+            table(
+                buys.set_index("item")
+                .loc[[c for c in stickers.BUY_CATEGORIES if c in set(buys["item"])]]
+                .reset_index()
+            )
+        table(
+            behaviour[behaviour["stake"] == stake].drop(columns="stake"),
+            column_config={g: st.column_config.NumberColumn(format="%.3f") for g in sets},
+        )
+    st.caption(
+        "Eternal jokers can't be sold; a Perishable is debuffed once its rounds run out "
+        "(expired). Buy rate: bought ÷ legal listings, as Shop purchases. Behaviour over every "
+        "shop decision: mean over the group's runs, the two totals summed. An expired "
+        "Perishable's decisions before sale are counted per episode and joker, the selling "
+        "decision included. As balatro-shop-rl's scripts/stickers.py."
     )
 
 
@@ -2378,6 +2427,7 @@ with tabs[4], table_budget():
                 },
                 row_height=60 if sprites else None,
             )
+        sticker_panel()
 
 # --- Joker collection -----------------------------------------------------
 with tabs[5], table_budget():
@@ -2670,14 +2720,28 @@ with tabs[8], table_budget():
                         match = rounds_[rounds_["round"] == blind_round]["beaten"]
                         beaten = bool(match.iloc[0]) if len(match) else None
                     held, logged, held_states = hands.blind_jokers(run, episode, blind_round)
+                    held_extra = hands.blind_held(run, episode, blind_round, held)
                     st.markdown("**Jokers held**")
                     if held:
                         joker_grid(
                             [
-                                (j, html.escape(cards.state_label(j, cards.joker_state(st_))))
-                                for j, st_ in zip(held, held_states, strict=False)
+                                (
+                                    j,
+                                    " ".join(
+                                        x
+                                        for x in (
+                                            html.escape(
+                                                cards.state_label(j, cards.joker_state(st_))
+                                            ),
+                                            cards.extra_badges(hj.ed, hj.st, hj.perish),
+                                        )
+                                        if x
+                                    ),
+                                )
+                                for j, st_, hj in zip(held, held_states, held_extra, strict=False)
                             ],
                             "ex-held",
+                            [hj.expired for hj in held_extra],
                         )
                     st.caption(
                         ("None. " if not held else "")

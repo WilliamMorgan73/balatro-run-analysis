@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from balatro_analysis import catalog, stats
+from balatro_analysis.cards import item_extra
 from balatro_analysis.loader import Run, memo
 
 DEFAULT_INTEREST_CAP = 25
@@ -460,6 +461,9 @@ def offers(run: Run) -> pd.DataFrame:
                         ),
                         "affordable": item["cost"] <= offer["dollars"],
                         "bought": bought,
+                        # log_version 17 (None and () before)
+                        "edition": item_extra(item)[0],
+                        "stickers": item_extra(item)[1],
                     }
                 )
     return pd.DataFrame(rows).assign(run=run.name)

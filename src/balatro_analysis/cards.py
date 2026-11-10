@@ -142,6 +142,38 @@ def held_jokers(keys, extras=None) -> list[HeldJoker]:
     return out
 
 
+EDITION_NAMES = {
+    "foil": "Foil",
+    "holo": "Holographic",
+    "polychrome": "Polychrome",
+    "negative": "Negative",
+}
+# sticker badge colours, as the game's sticker art
+STICKER_COLOURS = {"eternal": "#b26cbb", "perishable": "#4f6367", "rental": "#c8831b"}
+EDITION_COLOUR = "#009dff"
+
+
+def _badge(text: str, colour: str) -> str:
+    return (
+        f'<span style="background:{colour};color:#fff;border-radius:5px;padding:0 5px;'
+        f'font-size:11px;font-weight:700;white-space:nowrap">{text}</span>'
+    )
+
+
+def extra_badges(ed: str | None, st: tuple[str, ...] = (), perish: float | None = None) -> str:
+    """HTML badges for an edition and stickers (log_version 17): "Foil", "Eternal",
+    "Perishable 3" (rounds left; "expired" at 0), "Rental"; "" if none."""
+    out = []
+    if ed:
+        out.append(_badge(EDITION_NAMES.get(ed, str(ed).title()), EDITION_COLOUR))
+    for s in st:
+        text = s.title()
+        if s == "perishable" and perish is not None:
+            text += " · expired" if perish <= 0 else f" {perish:g}"
+        out.append(_badge(text, STICKER_COLOURS.get(s, "#708b91")))
+    return " ".join(out)
+
+
 def item_extra(item: dict) -> tuple[str | None, tuple[str, ...]]:
     """A shops.jsonl item's edition and stickers (log_version 17; None and ()
     when not set or not logged)."""
