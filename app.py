@@ -1061,7 +1061,11 @@ def shop_purchases() -> None:
     for part in sorted(rates["part"].unique(), key=str):
         if by is not None:
             st.markdown(f"**{names.column(by)}: {names.of(by)(part)}**")
-        table(purchases.rate_table(rates, part, int(min_legal)))
+        shown = purchases.rate_table(rates, part, int(min_legal))
+        if shown.empty:
+            st.caption(f"No item with {int(min_legal)} legal listings: lower the threshold above.")
+        else:
+            table(shown)
     st.caption(
         "Each listing (entering a shop, or a reroll) counts once per item. Buy rate = listings "
         "bought ÷ listings where buying the item was legal (affordable, with room) at some "
