@@ -334,7 +334,10 @@ def price_paid(runs: list[Run]) -> pd.DataFrame:
             continue
         b = s[s["category"].isin(BUY_CATEGORIES[:-1]) & (s["spent"] > 0)]
         frames.append(b[["episode", "ante", "category", "item_key", "spent"]].assign(run=r.name))
-    return _concat(frames).rename(columns={"spent": "price"})
+    out = _concat(frames).rename(columns={"spent": "price"})
+    if out.empty:  # nothing bought: the columns still, for callers grouping on them
+        return pd.DataFrame(columns=["episode", "ante", "category", "item_key", "price", "run"])
+    return out
 
 
 # ---------------------------------------------------------------------------
