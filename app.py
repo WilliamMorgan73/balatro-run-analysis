@@ -176,7 +176,7 @@ def held_size(entry: tuple) -> int:
 
 
 def _sub_runs(run: Run) -> list[Run]:
-    return [r for r in (run, run.eval, run.test) if r is not None]
+    return [run, *run.splits()]  # with the replays read so far
 
 
 def _served(store: collections.OrderedDict, key: tuple, pkg_mtime: float) -> Run:
@@ -605,10 +605,43 @@ PHASE_CAPTIONS = {
     "Evaluation": "Learning: greedy eval rounds during training. Not for ranking runs.",
     "Training": "Diagnostics: the episodes trained on, with exploration.",
 }
+# "Replay: <tag>": a replay/<tag>/ split (the test games played again, maybe on
+# other decks or stakes, or endless), offered for the tags every picked run has
+REPLAY_PHASE = "Replay: "
+
+
+def phase_split(phase: str) -> str | None:
+    """The ``Run.split`` name behind an Episodes choice (None: training)."""
+    if phase.startswith(REPLAY_PHASE):
+        return f"{loader.REPLAY_DIR}/{phase.removeprefix(REPLAY_PHASE)}"
+    return PHASE_SPLITS[phase]
+
+
+def shared_replay_tags(run_list: list[Run]) -> list[str]:
+    """The replay tags every run in ``run_list`` has."""
+    tags = [set(r.replays.tags()) if r.replays is not None else set() for r in run_list]
+    return sorted(set.intersection(*tags)) if tags else []
+
+
+def replay_caption(info: dict | None) -> str:
+    """What a replay played, from its replay.json."""
+    if not info:
+        return "The test games played again."
+    parts = []
+    if info.get("decks"):
+        parts.append("decks " + ", ".join(names.deck(d) for d in info["decks"]))
+    if info.get("stakes"):
+        parts.append("stakes " + ", ".join(names.stake(x) for x in info["stakes"]))
+    if info.get("endless"):
+        parts.append("endless (play on past ante 8)")
+    games = f"{info['games']} " if info.get("games") else ""
+    return f"The {games}test games played again" + (": " + "; ".join(parts) if parts else "") + "."
 
 
 def episodes_shown() -> str:
     """Which episodes the tabs show, for captions and the export's README."""
+    if replay_tag is not None:
+        return f"the test games replayed ({replay_tag})"
     if test_mode:
         return "the test games"
     if eval_mode:
@@ -616,7 +649,7 @@ def episodes_shown() -> str:
     return f"episodes {ep_range[0]} to {ep_range[1]}"
 
 
-def phase_switch(phases: list[str]) -> str:
+def phase_switch(phases: list[str], captions: dict[str, str]) -> str:
     """The sidebar's Episodes switch over ``phases``, with a line on what it's for."""
     phase = st.segmented_control(
         "Episodes",
@@ -628,9 +661,11 @@ def phase_switch(phases: list[str]) -> str:
         "from these. **Evaluation**: greedy episodes on the fixed eval seeds every "
         "--eval-every episodes, for learning curves; too few games per round to rank runs "
         "on. **Training**: the episodes trained on, with exploration, for diagnostics. "
+        "**Replay**: the test games played again by balatro-shop-rl's replay_test.py "
+        "(replay/<tag>/), e.g. with the current logging (retest) or on other decks or stakes. "
         "Test and eval runs play the same games, so comparisons pair game by game.",
     )
-    st.caption(PHASE_CAPTIONS[phase])
+    st.caption(captions[phase])
     return phase
 
 
@@ -857,19 +892,32 @@ with st.sidebar:
 
     # Test or eval episodes (greedy, fixed games) replace the training episodes in
     # every tab.  Test is the default: it's what results are reported on.
+    # Replays play the test games again: shown like test games.
     with_split = {s: [r for r in runs if getattr(r, s) is not None] for s in loader.SPLIT_DIRS}
-    phases = [p for p, s in PHASE_SPLITS.items() if s is None or with_split[s]]
+    phases = [p for p, s in PHASE_SPLITS.items() if s is not None and with_split[s]]
+    phases += [REPLAY_PHASE + t for t in shared_replay_tags(runs)] + ["Training"]
     if st.session_state.get("phase") not in phases:  # Test if any run has it, else Training
         st.session_state.phase = phases[0] if phases[0] == "Test" else "Training"
     phase = "Training"  # no switch when there are only training episodes
+    split = None
+    replay_tag = None
     if len(phases) > 1:
-        phase = phase_switch(phases)
-    split = PHASE_SPLITS[phase]
-    eval_mode, test_mode = split == loader.EVAL_DIR, split == loader.TEST_DIR
+        captions = dict(PHASE_CAPTIONS)
+        for p in phases:
+            if p.startswith(REPLAY_PHASE):
+                first = runs[0].split(phase_split(p))
+                captions[p] = replay_caption(first.replay if first is not None else None)
+        phase = phase_switch(phases, captions)
+        split = phase_split(phase)
+        if phase.startswith(REPLAY_PHASE):
+            replay_tag = phase.removeprefix(REPLAY_PHASE)
+    eval_mode = split == loader.EVAL_DIR
+    test_mode = split == loader.TEST_DIR or replay_tag is not None
     if split is not None:
-        if missing := [r.name for r in runs if getattr(r, split) is None]:
+        picked = [(r, r.split(split)) for r in runs]
+        if missing := [r.name for r, s in picked if s is None]:
             st.caption(f"No {split} episodes, not shown: " + ", ".join(missing))
-        runs = [getattr(r, split) for r in with_split[split]]
+        runs = [s for _, s in picked if s is not None]
 
     filter_summary = st.empty()  # filled once the filters below are read
     with st.expander("Filter", icon=":material/filter_list:"):
@@ -1024,6 +1072,7 @@ def run_sheet_grid(sheet_runs: list[Run], ci, means: dict, best_run: str | None)
                         icon_uri,
                         hands.most_played_hand(r),
                         best=r.name == best_run,
+                        replay=r.replay,
                     )
                 )
                 order = e.sort_values(["ante", "return"], kind="stable")["episode"]

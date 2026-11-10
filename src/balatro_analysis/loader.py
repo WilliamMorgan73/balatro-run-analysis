@@ -106,6 +106,10 @@ class Run:
     offers: pd.DataFrame | None = _LazyTable()  # eval/ and test/ only, log_version 12
     eval: Run | None = None  # greedy episodes on the fixed eval seeds, if logged
     test: Run | None = None  # the final policy on the fixed test games, if logged
+    # the test games played again (replay/<tag>/), each read when first asked for
+    replays: Replays | None = field(default=None, repr=False, compare=False)
+    # a replay's replay.json (with its ``tag``); None for any other run
+    replay: dict | None = None
     # frames derived from this run's tables (see ``memo``), so the tables must not
     # change once read; a filtered or replace()d run starts empty
     _memo: dict = field(default_factory=dict, init=False, repr=False, compare=False)
@@ -141,7 +145,18 @@ class Run:
         return own + sum(s.read_bytes() for s in self.splits())
 
     def splits(self) -> list[Run]:
-        return [r for r in (getattr(self, d) for d in SPLIT_DIRS) if r is not None]
+        """The eval and test runs, and the replays read so far."""
+        own = [r for r in (getattr(self, d) for d in SPLIT_DIRS) if r is not None]
+        return own + (self.replays.loaded() if self.replays is not None else [])
+
+    def split(self, name: str) -> Run | None:
+        """The run's ``eval``, ``test`` or ``replay/<tag>`` episodes, None if it has none."""
+        if name in SPLIT_DIRS:
+            return getattr(self, name)
+        prefix = f"{REPLAY_DIR}/"
+        if name.startswith(prefix) and self.replays is not None:
+            return self.replays.get(name.removeprefix(prefix))
+        return None
 
     def unload(self) -> int:
         """Drop the tables read from disk (they are read again when next asked
@@ -178,6 +193,66 @@ def memo(run: Run, key: str, build: Callable[[], pd.DataFrame]) -> pd.DataFrame:
     if key not in run._memo:
         run._memo[key] = build()
     return run._memo[key].copy(deep=False)
+
+
+class Replays:
+    """A run's ``replay/<tag>/`` folders, by tag.  The tags are looked up on disk
+    each time (a replay can be added while the dashboard runs), and each replay is
+    read only when first asked for, then kept until its ``episodes.csv`` changes.
+    A pickled ``Replays`` keeps no replay, so the run-level cache doesn't depend on
+    them; their tables go through the run's own kind of reader (cached or not)."""
+
+    def __init__(self, owner: Run):
+        self._owner = owner
+        self._loaded: dict[str, tuple[int, Run | None]] = {}
+
+    def __getstate__(self) -> dict:
+        return {"_owner": self._owner, "_loaded": {}}
+
+    def _dir(self, tag: str = "") -> Path:
+        return self._owner.path / REPLAY_DIR / tag
+
+    def tags(self) -> list[str]:
+        """The tags with an ``episodes.csv``, sorted."""
+        try:
+            found = [p.name for p in self._dir().iterdir() if (p / "episodes.csv").is_file()]
+        except OSError:
+            return []
+        return sorted(found)
+
+    def get(self, tag: str) -> Run | None:
+        """The replay ``tag``, None if there is none or it has no games yet."""
+        file = self._dir(tag) / "episodes.csv"
+        try:
+            stamp = file.stat().st_mtime_ns
+        except OSError:
+            return None
+        with _READ_LOCK:
+            hit = self._loaded.get(tag)
+            if hit is None or hit[0] != stamp:
+                hit = self._loaded[tag] = (stamp, load_replay(self._owner, tag))
+        return hit[1]
+
+    def loaded(self) -> list[Run]:
+        """The replays read so far."""
+        return [r for _, r in self._loaded.values() if r is not None]
+
+
+def load_replay(run: Run, tag: str) -> Run | None:
+    """``run``'s ``replay/<tag>/`` games, as a Run named like ``run`` with
+    ``replay`` set to its replay.json; None if it has no games yet.  Its config is
+    the run's, with the replay's log_version and endless setting (a replay of an
+    old run is logged by the current code)."""
+    path = run.path / REPLAY_DIR / tag
+    info_file = path / "replay.json"
+    info = json.loads(info_file.read_text()) if info_file.is_file() else {}
+    info["tag"] = tag
+    config = {**run.config, **{k: info[k] for k in ("log_version", "endless") if k in info}}
+    out = _load_tables(path, run.name, config)
+    if run._reader is not None and run._reader.from_disk:
+        out._reader = run._reader.at(path, config)  # through the table cache if the run is
+    out.replay = info
+    return None if out.episodes.empty else out
 
 
 EVAL_DIR = "eval"
@@ -485,6 +560,8 @@ def load_run(
     run = _load_tables(path, name, config, report)
     for split in SPLIT_DIRS:
         setattr(run, split, _load_split(run, split, None, report))
+    if owner is None:
+        run.replays = Replays(run)
     return run
 
 
@@ -503,6 +580,8 @@ def extend_run(run: Run, progress: Progress | None = None) -> Run:
     out = _load_tables(run.path, run.name, run.config, report, previous=run)
     for split in SPLIT_DIRS:
         setattr(out, split, _load_split(out, split, getattr(run, split), report))
+    if run.replays is not None:
+        out.replays = Replays(out)
     return out
 
 

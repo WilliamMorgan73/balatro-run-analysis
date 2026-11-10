@@ -448,8 +448,10 @@ def run_sheet_html(
     icon_uri: IconUri,
     most_played: str | None = None,
     best: bool = False,
+    replay: dict | None = None,
 ) -> str:
-    """One run as the game's run-over screen: mean ante large, then the rest."""
+    """One run as the game's run-over screen: mean ante large, then the rest.
+    ``replay``: the replay.json of a replay's games, shown in the header."""
     who = (
         f"{_agent(config.get('shop_agent'), 'ShopAgent')} shop, "
         f"{_agent(config.get('play_agent'), 'PlayAgent')} play"
@@ -460,6 +462,12 @@ def run_sheet_html(
     lines = [("Best ante", str(best_ante)), ("Episodes", str(episodes))]
     if most_played:
         lines.append(("Most played hand", most_played))
+    if replay:
+        lines.append(("Replay", str(replay.get("tag", "?"))))
+        if replay.get("stakes"):
+            lines.append(("Stakes", ", ".join(names.stake(x) for x in replay["stakes"])))
+        if replay.get("endless"):
+            lines.append(("Endless", "yes"))
     deck_art = "".join(
         f'<img src="{u}" alt="{_esc(names.deck(d))}" title="{_esc(names.deck(d))}">'
         if (u := icon_uri(d))

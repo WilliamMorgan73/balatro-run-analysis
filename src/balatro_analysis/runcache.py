@@ -194,6 +194,9 @@ def skeleton(run: Run) -> Run:
     for split in SPLIT_DIRS:
         sub = getattr(run, split)
         setattr(out, split, skeleton(sub) if sub is not None else None)
+    out.replay = run.replay
+    if run.replays is not None:
+        out.replays = loader.Replays(out)  # read again when asked for
     return out
 
 

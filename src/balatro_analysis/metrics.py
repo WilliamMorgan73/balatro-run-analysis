@@ -53,6 +53,8 @@ def filter_episodes(
         **dict.fromkeys(TABLES, UNREAD),  # cut from run's when first asked for
         eval=filtered_eval,
         test=filtered_test,
+        replays=run.replays,  # unfiltered: a replay is picked as a split, then filtered
+        replay=run.replay,
     )
     out._reader = SubsetReader(run, episodes)
     return out
