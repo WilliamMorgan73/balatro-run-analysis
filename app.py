@@ -71,6 +71,7 @@ from balatro_analysis import (  # noqa: E402
     collection,
     details,
     economy,
+    endless,
     export,
     find,
     hands,
@@ -78,10 +79,14 @@ from balatro_analysis import (  # noqa: E402
     loader,
     memory,
     metrics,
+    order,
     plots,
+    purchases,
     replay,
+    report_stats,
     runcache,
     stats,
+    stickers,
     studies,
     theme,
 )
@@ -176,7 +181,7 @@ def held_size(entry: tuple) -> int:
 
 
 def _sub_runs(run: Run) -> list[Run]:
-    return [r for r in (run, run.eval, run.test) if r is not None]
+    return [run, *run.splits()]  # with the replays read so far
 
 
 def _served(store: collections.OrderedDict, key: tuple, pkg_mtime: float) -> Run:
@@ -374,6 +379,17 @@ LOG_VERSIONS = {
     5: "cash-out money from tags",
     6: "highest ante reached (max_ante); a sell's item_cost is its sale value",
     7: "eval hand and deck logs",
+    8: "upstream Jackdaw engine",
+    9: "held-out jokers",
+    10: "logged offers of chosen jokers (offers.jsonl)",
+    11: "DQN function tables",
+    12: "round features",
+    13: "relative suits",
+    14: "a test set (test/)",
+    15: "scaling jokers' values",
+    16: "deck suits",
+    17: "editions and stickers on shop items and held jokers, the shop at each decision, "
+    "endless mode",
 }
 
 
@@ -502,12 +518,20 @@ def _cell_list(value) -> list | None:
     return list(value)
 
 
-def joker_grid(items: list[tuple[str, str]], prefix: str) -> None:
-    """(joker key, caption HTML) pairs as clickable tiles that open each joker's modal."""
+def joker_grid(items: list[tuple[str, str]], prefix: str, dimmed: list[bool] | None = None) -> None:
+    """(joker key, caption HTML) pairs as clickable tiles that open each joker's
+    modal; ``dimmed`` ones (an expired Perishable) greyed out."""
     by_key = {c.key: c for c in joker_cards()}
-    shown = [(by_key[k], cap) for k, cap in items if k in by_key]
+    dimmed = dimmed or [False] * len(items)
+    shown = [(by_key[k], cap, d) for (k, cap), d in zip(items, dimmed, strict=True) if k in by_key]
     modal_html(
-        collection.mini_grid_html([c for c, _ in shown], names, prefix, [cap for _, cap in shown])
+        collection.mini_grid_html(
+            [c for c, _, _ in shown],
+            names,
+            prefix,
+            [cap for _, cap, _ in shown],
+            [d for _, _, d in shown],
+        )
     )
 
 
@@ -605,10 +629,43 @@ PHASE_CAPTIONS = {
     "Evaluation": "Learning: greedy eval rounds during training. Not for ranking runs.",
     "Training": "Diagnostics: the episodes trained on, with exploration.",
 }
+# "Replay: <tag>": a replay/<tag>/ split (the test games played again, maybe on
+# other decks or stakes, or endless), offered for the tags every picked run has
+REPLAY_PHASE = "Replay: "
+
+
+def phase_split(phase: str) -> str | None:
+    """The ``Run.split`` name behind an Episodes choice (None: training)."""
+    if phase.startswith(REPLAY_PHASE):
+        return f"{loader.REPLAY_DIR}/{phase.removeprefix(REPLAY_PHASE)}"
+    return PHASE_SPLITS[phase]
+
+
+def shared_replay_tags(run_list: list[Run]) -> list[str]:
+    """The replay tags every run in ``run_list`` has."""
+    tags = [set(r.replays.tags()) if r.replays is not None else set() for r in run_list]
+    return sorted(set.intersection(*tags)) if tags else []
+
+
+def replay_caption(info: dict | None) -> str:
+    """What a replay played, from its replay.json."""
+    if not info:
+        return "The test games played again."
+    parts = []
+    if info.get("decks"):
+        parts.append("decks " + ", ".join(names.deck(d) for d in info["decks"]))
+    if info.get("stakes"):
+        parts.append("stakes " + ", ".join(names.stake(x) for x in info["stakes"]))
+    if info.get("endless"):
+        parts.append("endless (play on past ante 8)")
+    games = f"{info['games']} " if info.get("games") else ""
+    return f"The {games}test games played again" + (": " + "; ".join(parts) if parts else "") + "."
 
 
 def episodes_shown() -> str:
     """Which episodes the tabs show, for captions and the export's README."""
+    if replay_tag is not None:
+        return f"the test games replayed ({replay_tag})"
     if test_mode:
         return "the test games"
     if eval_mode:
@@ -616,7 +673,7 @@ def episodes_shown() -> str:
     return f"episodes {ep_range[0]} to {ep_range[1]}"
 
 
-def phase_switch(phases: list[str]) -> str:
+def phase_switch(phases: list[str], captions: dict[str, str]) -> str:
     """The sidebar's Episodes switch over ``phases``, with a line on what it's for."""
     phase = st.segmented_control(
         "Episodes",
@@ -628,9 +685,11 @@ def phase_switch(phases: list[str]) -> str:
         "from these. **Evaluation**: greedy episodes on the fixed eval seeds every "
         "--eval-every episodes, for learning curves; too few games per round to rank runs "
         "on. **Training**: the episodes trained on, with exploration, for diagnostics. "
+        "**Replay**: the test games played again by balatro-shop-rl's replay_test.py "
+        "(replay/<tag>/), e.g. with the current logging (retest) or on other decks or stakes. "
         "Test and eval runs play the same games, so comparisons pair game by game.",
     )
-    st.caption(PHASE_CAPTIONS[phase])
+    st.caption(captions[phase])
     return phase
 
 
@@ -857,19 +916,32 @@ with st.sidebar:
 
     # Test or eval episodes (greedy, fixed games) replace the training episodes in
     # every tab.  Test is the default: it's what results are reported on.
+    # Replays play the test games again: shown like test games.
     with_split = {s: [r for r in runs if getattr(r, s) is not None] for s in loader.SPLIT_DIRS}
-    phases = [p for p, s in PHASE_SPLITS.items() if s is None or with_split[s]]
+    phases = [p for p, s in PHASE_SPLITS.items() if s is not None and with_split[s]]
+    phases += [REPLAY_PHASE + t for t in shared_replay_tags(runs)] + ["Training"]
     if st.session_state.get("phase") not in phases:  # Test if any run has it, else Training
         st.session_state.phase = phases[0] if phases[0] == "Test" else "Training"
     phase = "Training"  # no switch when there are only training episodes
+    split = None
+    replay_tag = None
     if len(phases) > 1:
-        phase = phase_switch(phases)
-    split = PHASE_SPLITS[phase]
-    eval_mode, test_mode = split == loader.EVAL_DIR, split == loader.TEST_DIR
+        captions = dict(PHASE_CAPTIONS)
+        for p in phases:
+            if p.startswith(REPLAY_PHASE):
+                first = runs[0].split(phase_split(p))
+                captions[p] = replay_caption(first.replay if first is not None else None)
+        phase = phase_switch(phases, captions)
+        split = phase_split(phase)
+        if phase.startswith(REPLAY_PHASE):
+            replay_tag = phase.removeprefix(REPLAY_PHASE)
+    eval_mode = split == loader.EVAL_DIR
+    test_mode = split == loader.TEST_DIR or replay_tag is not None
     if split is not None:
-        if missing := [r.name for r in runs if getattr(r, split) is None]:
+        picked = [(r, r.split(split)) for r in runs]
+        if missing := [r.name for r, s in picked if s is None]:
             st.caption(f"No {split} episodes, not shown: " + ", ".join(missing))
-        runs = [getattr(r, split) for r in with_split[split]]
+        runs = [s for _, s in picked if s is not None]
 
     filter_summary = st.empty()  # filled once the filters below are read
     with st.expander("Filter", icon=":material/filter_list:"):
@@ -927,6 +999,176 @@ def filtered(r: Run, start: float, end: float, rounds: list[int] | None = None) 
 
 
 runs = [filtered(r, *ep_range, eval_rounds) for r in runs]
+RETEST = "retest"  # the replay tag of the test games again, with the current logging
+
+
+def item_runs() -> tuple[list[Run], list[str]]:
+    """The runs for item-level views (shop purchases, stickers): on the test games,
+    each run's ``retest`` replay instead when it has one (the same games, logged with
+    editions and stickers).  Also the names swapped."""
+    if split != loader.TEST_DIR:
+        return runs, []
+    shown = {r.name: r for r in runs}
+    out, swapped = [], []
+    for orig in train_runs:
+        if orig.name not in shown:
+            continue
+        retest = orig.split(f"{loader.REPLAY_DIR}/{RETEST}")
+        if retest is None:
+            out.append(shown[orig.name])
+        else:
+            out.append(filtered(retest, 0, float("inf")))
+            swapped.append(orig.name)
+    return out, swapped
+
+
+def item_runs_caption(swapped: list[str]) -> None:
+    if swapped:
+        st.caption(
+            f"From the **{RETEST}** replay (the same test games, logged with editions and "
+            "stickers) for " + ", ".join(swapped) + "."
+        )
+
+
+def shop_purchases() -> None:
+    """Buy rate of each kind of shop item, as balatro-shop-rl's special_buys.py."""
+    item_list, swapped = item_runs()
+    if not need(
+        [r for r in item_list if r.has("shops") and r.has("steps")] or None,
+        "shop and step logs",
+        no_steps,
+    ):
+        return
+    item_runs_caption(swapped)
+    if old := [r.name for r in item_list if not purchases.has_editions(r)]:
+        need_new(None, "editions, stickers or joker slots for " + ", ".join(old), version=17)
+    c1, c2 = st.columns(2)
+    by = c1.selectbox(
+        "Split by",
+        [None, "deck", "stake"],
+        format_func=lambda c: "Nothing" if c is None else names.column(c),
+        key="buys_by",
+    )
+    min_legal = c2.number_input(
+        "Hide rows with fewer legal listings than",
+        0,
+        value=purchases.MIN_LEGAL,
+        key="buys_min_legal",
+    )
+    rates = purchases.buy_rates(grouped(item_list), by)
+    if not need(rates, "shop listings"):
+        return
+    for part in sorted(rates["part"].unique(), key=str):
+        if by is not None:
+            st.markdown(f"**{names.column(by)}: {names.of(by)(part)}**")
+        shown = purchases.rate_table(rates, part, int(min_legal))
+        if shown.empty:
+            st.caption(f"No item with {int(min_legal)} legal listings: lower the threshold above.")
+        else:
+            table(shown)
+    st.caption(
+        "Each listing (entering a shop, or a reroll) counts once per item. Buy rate = listings "
+        "bought ÷ listings where buying the item was legal (affordable, with room) at some "
+        "decision while it was on offer, per run, then mean ± SD over the group's runs; (n) = "
+        "legal listings pooled. Picks from packs aren't shop buys. Slots full: no free joker "
+        "slot at the listing. As balatro-shop-rl's scripts/special_buys.py."
+    )
+    st.download_button(
+        "Buy rates (CSV)",
+        data=rates.to_csv(index=False),
+        file_name="buy_rates.csv",
+        mime="text/csv",
+        key="dl_buy_rates",
+        on_click="ignore",
+    )
+
+
+def sticker_panel() -> None:
+    """Eternal and Perishable jokers (stakes 4 and 7, log_version 17), per stake:
+    buy rates and what the agent does with them, as balatro-shop-rl's stickers.py."""
+    st.subheader("Stickers: Eternal and Perishable jokers")
+    item_list, swapped = item_runs()
+    with_steps = [r for r in item_list if r.has("steps")]
+    if not need(with_steps or None, "shop decisions", no_steps):
+        return
+    if not any(stickers.has_stickers(r) for r in with_steps):
+        need_new(None, "stickers on held jokers", version=17)
+        return
+    item_runs_caption(swapped)
+    sets = grouped([r for r in with_steps if stickers.has_stickers(r)])
+    behaviour = stickers.behaviour_table(sets)
+    rates = purchases.buy_rates(sets, "stake")
+    if not need(behaviour, "shop decisions"):
+        return
+    for stake in behaviour["stake"].unique():
+        st.markdown(f"**{names.column('stake')}: {names.stake(stake)}**")
+        buys = purchases.rate_table(rates, stake, min_legal=0)
+        if len(buys):
+            buys = buys[buys["item"].isin(stickers.BUY_CATEGORIES)]
+            table(
+                buys.set_index("item")
+                .loc[[c for c in stickers.BUY_CATEGORIES if c in set(buys["item"])]]
+                .reset_index()
+            )
+        table(
+            behaviour[behaviour["stake"] == stake].drop(columns="stake"),
+            column_config={g: st.column_config.NumberColumn(format="%.3f") for g in sets},
+        )
+    st.caption(
+        "Eternal jokers can't be sold; a Perishable is debuffed once its rounds run out "
+        "(expired). Buy rate: bought ÷ legal listings, as Shop purchases. Behaviour over every "
+        "shop decision: mean over the group's runs, the two totals summed. An expired "
+        "Perishable's decisions before sale are counted per episode and joker, the selling "
+        "decision included. As balatro-shop-rl's scripts/stickers.py."
+    )
+
+
+def order_offers() -> None:
+    """The Order's offers by xMult jokers held (offers.jsonl, --offer-jokers j_order),
+    as part 1 of balatro-shop-rl's scripts/order_context.py."""
+    with_order = [r for r in runs if order.has_order_offers(r)]
+    if not with_order:
+        return
+    st.subheader("The Order: bought more with xMult jokers held?")
+    for name, members in grouped(with_order).items():
+        t, diff = order.order_table(members)
+        if not len(t):
+            continue
+        st.markdown(f"**{name}** ({len(members)} run{'s' if len(members) > 1 else ''})")
+        table(
+            t,
+            column_config={
+                c: st.column_config.NumberColumn(format=f)
+                for c, f in (
+                    ("buy rate", "%.2f"),
+                    ("SD (seeds)", "%.2f"),
+                    ("mean q_buy_adv", "%+.3f"),
+                )
+            },
+        )
+        if diff is not None:
+            st.caption(
+                f"Buy rate with 1 xMult joker held minus none, paired over seeds: "
+                f"{diff['mean']:+.3f} [{diff['lo']:+.3f}, {diff['hi']:+.3f}], "
+                f"p = {diff['p']:.3g}, {diff['better']}/{diff['n']} seeds."
+            )
+    st.caption(
+        "Decisions where buying The Order was legal (one row per decision and slot, from "
+        "offers.jsonl), by how many xMult jokers (an x_mult term in the joker algebra) "
+        "were held: buy rate per run, mean ± SD over seeds; q_buy_adv is the DQN's value of "
+        "buying minus the best other legal action. As part 1 of balatro-shop-rl's "
+        "scripts/order_context.py."
+    )
+
+
+def grouped(run_list: list[Run]) -> dict[str, list[Run]]:
+    """``run_list`` by group when the Overview compares groups, else one per run."""
+    group_map = stats.groups(run_list)
+    if st.session_state.get("compare_by") == "Groups" and len(group_map) < len(run_list):
+        return group_map
+    return {r.name: [r] for r in run_list}
+
+
 eval_runs = [filtered(r.eval, 0, float("inf")) for r in train_runs if r.eval is not None]
 run_names = [r.name for r in runs]
 by_name = {r.name: r for r in runs}
@@ -1024,6 +1266,7 @@ def run_sheet_grid(sheet_runs: list[Run], ci, means: dict, best_run: str | None)
                         icon_uri,
                         hands.most_played_hand(r),
                         best=r.name == best_run,
+                        replay=r.replay,
                     )
                 )
                 order = e.sort_values(["ante", "return"], kind="stable")["episode"]
@@ -1099,6 +1342,49 @@ def improvement_table(by_group: bool, baseline: str) -> None:
     st.caption(POI_HELP.format(unit="group" if by_group else "run") + used + ". 95% CI.")
     num = st.column_config.NumberColumn(format="%.3f")
     table(poi, column_config={names.column(c): num for c in ("p_improvement", "p_low", "p_high")})
+
+
+def past_eight_panel(by_group: bool) -> None:
+    """Endless runs (log_version 17): how far the won games went past ante 8, as
+    balatro-shop-rl's scripts/endless_report.py."""
+    endless_runs = [r for r in runs if endless.is_endless(r)]
+    if not endless_runs:
+        return
+    sets = stats.groups(endless_runs) if by_group else {r.name: [r] for r in endless_runs}
+    rows, counts = [], {}
+    for name, members in sets.items():
+        res = endless.past_eight(members)
+        if res is None:
+            continue
+        rows.append(
+            {
+                "group" if by_group else "run": name,
+                "games": res.games,
+                "won": res.won,
+                "mean highest ante of a win": res.mean_win_ante,
+                "lowest seed": res.seed_low,
+                "highest seed": res.seed_high,
+            }
+        )
+        counts[name] = res.counts
+    st.markdown("**Endless: past ante 8**")
+    if not rows:
+        st.caption("No won games among the endless runs shown.")
+        return
+    table = pd.DataFrame(rows)
+    if not by_group:
+        table = table.drop(columns=["lowest seed", "highest seed"])
+    st.dataframe(table, hide_index=True, key="past_eight")
+    st.caption(
+        "Endless runs play a won game on until it is lost, so a win's highest ante can pass "
+        "8. Mean highest ante of a win: each run's mean over its won games, then the mean "
+        "over runs (seeds), with the range across them. Counts of won games by highest ante:"
+    )
+    st.dataframe(
+        pd.DataFrame(counts).fillna(0).astype(int).rename_axis("highest ante").reset_index(),
+        hide_index=True,
+        key="past_eight_counts",
+    )
 
 
 def profile_chart(by_group: bool) -> None:
@@ -1311,12 +1597,81 @@ def show_study_tables(groups: pd.DataFrame, pairs: pd.DataFrame, key: str) -> No
         )
 
 
+def study_members(spec: dict) -> list[Run]:
+    """The study's runs on the episodes shown: each group's runs, and for a member
+    ``<group>@<tag>`` the group's runs' replay/<tag>/ games (whatever Episodes shows)."""
+    out = []
+    for name in spec.get("groups", []):
+        group, tag = studies.member(name)
+        if tag is None:
+            out += [r for r in runs if stats.group_of(r) == name]
+            continue
+        for orig in train_runs:
+            if stats.group_of(orig) != group:
+                continue
+            rp = orig.split(f"{loader.REPLAY_DIR}/{tag}")
+            if rp is not None:
+                out.append(studies.as_member(filtered(rp, 0, float("inf")), name))
+    return out
+
+
+def script_tables(spec: dict, members: list[Run]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The study as balatro-shop-rl's scripts print it (report_stats): a row per
+    group, then each pair."""
+    sets = stats.groups(members)
+    order = [g for g in spec.get("groups", []) if g in sets]
+    summary = {g: report_stats.group_summary(sets[g]) for g in order}
+    g_rows = [report_stats.group_row(g, summary[g]) for g in order]
+    p_rows = [
+        report_stats.compare_row(f"{a} - {b}", report_stats.compare(summary[a], summary[b]))
+        for a, b in spec.get("pairs", [])
+        if summary.get(a) and summary.get(b)
+    ]
+    return (
+        pd.DataFrame(g_rows, columns=report_stats.GROUP_COLUMNS),
+        pd.DataFrame(p_rows, columns=report_stats.COMPARE_COLUMNS),
+    )
+
+
+def show_script_tables(
+    spec: dict, members: list[Run], memo_run: Run, memo_key: str, key: str
+) -> None:
+    """``script_tables`` in an expander, computed only while it is open (the
+    bootstrap takes a second or two), memoised on ``memo_run`` (a stable run)."""
+    box = st.expander(
+        "As the balatro-shop-rl scripts print it",
+        icon=":material/terminal:",
+        key=f"{key}_script",
+        on_change="rerun",
+    )
+    with box:
+        if not box.open:
+            return
+        g, p = stats.memo_value(
+            memo_run,
+            f"script:{memo_key}:" + ",".join(r.name for r in members),
+            lambda: script_tables(spec, members),
+        )
+        st.caption(
+            "shop_rl.report_stats, as endless_report.py, deck_transfer.py and stickers.py "
+            "report: win % ± SD over seeds, mean final round, mean ante over seeds, IQM ante "
+            "with a stratified bootstrap CI (numpy seed 0); pairs: paired by seed (Student-t "
+            "CI and p), seeds better, P(improvement) game by game. Copy the Markdown for notes."
+        )
+        st.dataframe(g, hide_index=True, key=f"{key}_script_groups")
+        if len(p):
+            st.dataframe(p, hide_index=True, key=f"{key}_script_pairs")
+        text = report_stats.markdown(report_stats.GROUP_COLUMNS, g.values.tolist())
+        if len(p):
+            text += "\n\n" + report_stats.markdown(report_stats.COMPARE_COLUMNS, p.values.tolist())
+        st.code(text, language="markdown")
+
+
 def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> None:
     """The chosen study's results on the episodes shown: one row per group, then
     each pair A - B matched by training seed; by ``split_by`` too if it has one."""
     spec = manifest.studies[study]
-    in_study = set(spec.get("groups", []))
-    members = [r for r in runs if stats.group_of(r) in in_study]
+    members = study_members(spec)
     st.subheader(spec.get("title", study))
     if not members:
         st.info("None of this study's runs are picked (or have these episodes).")
@@ -1333,8 +1688,23 @@ def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> No
             "Not the test games: set **Episodes** to *Test* for the results to report.",
             icon=":material/info:",
         )
-    groups, pairs = study_tables(study, spec, members)
+    kinds = {endless.is_endless(r) for r in members}
+    memo_key = study  # the tables' memo key
+    if True in kinds:
+        mixed = len(kinds) > 1
+        if st.toggle(
+            "Cap ante at 8",
+            value=mixed,
+            key=f"study_cap_{study}",
+            help="Endless runs play a won game on past ante 8. Capped, every run's ante stops "
+            "at 8, so endless and normal runs compare like for like (as endless_report.py's "
+            "first table); on by default when the study mixes them.",
+        ):
+            members = [endless.capped(r) for r in members]
+            memo_key = f"{study}:cap"
+    groups, pairs = study_tables(memo_key, spec, members)
     show_study_tables(groups, pairs, f"study_{study}")
+    show_script_tables(spec, members, members[0], memo_key, f"study_{study}")
     tex = [
         latex.study_groups(groups, latex.escape(spec.get("title", study)), f"{study}-groups"),
         latex.study_pairs(
@@ -1351,8 +1721,11 @@ def study_section(manifest: studies.Manifest, study: str, runs: list[Run]) -> No
             with st.expander(
                 f"{names.column(col)}: {names.of(col)(v) if col in ('deck', 'stake') else v}"
             ):
-                g, p = study_tables(f"{study}:{col}={v}", spec, sub)
+                g, p = study_tables(f"{memo_key}:{col}={v}", spec, sub)
                 show_study_tables(g, p, f"study_{study}_{v}")
+                show_script_tables(
+                    spec, sub, members[0], f"{memo_key}:{col}={v}", f"study_{study}_{v}"
+                )
                 tex.append(
                     latex.study_pairs(
                         p,
@@ -1563,8 +1936,9 @@ with tabs[0], table_budget():
                 "ante reached",
                 "Share of episodes that ended at each ante (the highest ante reached), one bar "
                 "per run. Bars further right mean the agent gets further; winning means "
-                "clearing ante 8.",
+                "clearing ante 8 (endless runs play a win on past it).",
             )
+            past_eight_panel(by_group)
             profile_chart(by_group)
         with st.expander("Run configs"):
             for r in runs:
@@ -1883,6 +2257,7 @@ with tabs[3], table_budget():
                 "Economy vs outcome",
                 "Cash-out income",
                 "Shop offers",
+                "Shop purchases",
             ],
             key="econ_tab",
             on_change="rerun",
@@ -2111,6 +2486,11 @@ with tabs[3], table_budget():
                             ],
                             "econ-jk",
                         )
+                order_offers()
+
+        with sub[7]:
+            if sub[7].open:
+                shop_purchases()
 
 # --- Jokers ---------------------------------------------------------------
 with tabs[4], table_budget():
@@ -2165,6 +2545,7 @@ with tabs[4], table_budget():
                 },
                 row_height=60 if sprites else None,
             )
+        sticker_panel()
 
 # --- Joker collection -----------------------------------------------------
 with tabs[5], table_budget():
@@ -2457,14 +2838,28 @@ with tabs[8], table_budget():
                         match = rounds_[rounds_["round"] == blind_round]["beaten"]
                         beaten = bool(match.iloc[0]) if len(match) else None
                     held, logged, held_states = hands.blind_jokers(run, episode, blind_round)
+                    held_extra = hands.blind_held(run, episode, blind_round, held)
                     st.markdown("**Jokers held**")
                     if held:
                         joker_grid(
                             [
-                                (j, html.escape(cards.state_label(j, cards.joker_state(st_))))
-                                for j, st_ in zip(held, held_states, strict=False)
+                                (
+                                    j,
+                                    " ".join(
+                                        x
+                                        for x in (
+                                            html.escape(
+                                                cards.state_label(j, cards.joker_state(st_))
+                                            ),
+                                            cards.extra_badges(hj.ed, hj.st, hj.perish),
+                                        )
+                                        if x
+                                    ),
+                                )
+                                for j, st_, hj in zip(held, held_states, held_extra, strict=False)
                             ],
                             "ex-held",
+                            [hj.expired for hj in held_extra],
                         )
                     st.caption(
                         ("None. " if not held else "")

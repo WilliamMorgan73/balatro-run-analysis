@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import NamedTuple
+
+import numpy as np
 
 SUITS = {"H": "Hearts", "C": "Clubs", "D": "Diamonds", "S": "Spades"}
 SUIT_SYMBOLS = {"H": "♥", "C": "♣", "D": "♦", "S": "♠"}
@@ -84,12 +87,98 @@ def parse_cards(values) -> list[PlayingCard]:
     return [parse_card(v) for v in values] if isinstance(values, list) else []
 
 
-def parse_joker(value: str | dict) -> tuple[str, str | None]:
-    """A joker as logged (its key, or ``{"k": key, "ed": edition, "s": values}``):
-    (key, edition); ``joker_state`` reads the values."""
+STICKERS = ("eternal", "perishable", "rental")  # log_version 17, in the order logged
+
+
+class HeldJoker(NamedTuple):
+    """A joker as held: its key, edition, stickers (log_version 17, e.g.
+    ``("eternal",)``) and, for a Perishable, its rounds left (0: expired)."""
+
+    key: str
+    ed: str | None = None
+    st: tuple[str, ...] = ()
+    perish: float | None = None
+
+    @property
+    def expired(self) -> bool:
+        """A Perishable whose rounds have run out (debuffed)."""
+        return "perishable" in self.st and self.perish is not None and self.perish <= 0
+
+
+def _present(v):
+    """``v``, or None for a missing value (null, NaN)."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return None
+    return v
+
+
+def _extra(value: dict) -> tuple[str | None, tuple[str, ...], float | None]:
+    st = _present(value.get("st"))
+    st = tuple(st) if st is not None else ()
+    return _present(value.get("ed")), st, _present(value.get("perish"))
+
+
+def parse_joker(value: str | dict) -> HeldJoker:
+    """A joker as logged in hands.jsonl (its key, or ``{"k": key, "ed": edition,
+    "st": stickers, "perish": rounds left, "s": values}``); ``joker_state`` reads
+    the values.  Unpacks as (key, edition, stickers, rounds left)."""
     if isinstance(value, dict):
-        return str(value.get("k", "")), value.get("ed")
-    return str(value), None
+        return HeldJoker(str(value.get("k", "")), *_extra(value))
+    return HeldJoker(str(value))
+
+
+def held_jokers(keys, extras=None) -> list[HeldJoker]:
+    """steps.jsonl ``jokers_before`` with ``jokers_extra`` (log_version 17: one
+    ``{"ed", "st", "perish"}`` or null per slot; older logs have none)."""
+    if not isinstance(keys, list | tuple | np.ndarray):
+        return []
+    extras = list(extras) if isinstance(extras, list | tuple | np.ndarray) else []
+    out = []
+    for i, key in enumerate(keys):
+        extra = extras[i] if i < len(extras) else None
+        out.append(
+            HeldJoker(str(key), *_extra(extra)) if isinstance(extra, dict) else HeldJoker(str(key))
+        )
+    return out
+
+
+EDITION_NAMES = {
+    "foil": "Foil",
+    "holo": "Holographic",
+    "polychrome": "Polychrome",
+    "negative": "Negative",
+}
+# sticker badge colours, as the game's sticker art
+STICKER_COLOURS = {"eternal": "#b26cbb", "perishable": "#4f6367", "rental": "#c8831b"}
+EDITION_COLOUR = "#009dff"
+
+
+def _badge(text: str, colour: str) -> str:
+    return (
+        f'<span style="background:{colour};color:#fff;border-radius:5px;padding:0 5px;'
+        f'font-size:11px;font-weight:700;white-space:nowrap">{text}</span>'
+    )
+
+
+def extra_badges(ed: str | None, st: tuple[str, ...] = (), perish: float | None = None) -> str:
+    """HTML badges for an edition and stickers (log_version 17): "Foil", "Eternal",
+    "Perishable 3" (rounds left; "expired" at 0), "Rental"; "" if none."""
+    out = []
+    if ed:
+        out.append(_badge(EDITION_NAMES.get(ed, str(ed).title()), EDITION_COLOUR))
+    for s in st:
+        text = s.title()
+        if s == "perishable" and perish is not None:
+            text += " · expired" if perish <= 0 else f" {perish:g}"
+        out.append(_badge(text, STICKER_COLOURS.get(s, "#708b91")))
+    return " ".join(out)
+
+
+def item_extra(item: dict) -> tuple[str | None, tuple[str, ...]]:
+    """A shops.jsonl item's edition and stickers (log_version 17; None and ()
+    when not set or not logged)."""
+    ed, st, _ = _extra(item)
+    return ed, st
 
 
 def joker_keys(values) -> list[str] | None:

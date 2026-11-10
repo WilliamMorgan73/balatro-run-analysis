@@ -100,9 +100,11 @@ def _code_text(source: str) -> str:
 
 def fingerprint(path: Path) -> tuple:
     """What a cached copy of the run at ``path`` must match to be reused."""
+    # not replay/: each replay is read (and checked) only when it is opened
     dirs = [path, *(path / d for d in SPLIT_DIRS)]
-    if loader.is_split_dir(path):
-        dirs.append(path.parent)  # a split loaded on its own reads the run's config
+    owner = loader.split_owner(path)
+    if owner is not None:
+        dirs.append(owner)  # a split loaded on its own reads the run's config
     files = []
     for d in dirs:
         for name in SOURCES:
@@ -192,6 +194,9 @@ def skeleton(run: Run) -> Run:
     for split in SPLIT_DIRS:
         sub = getattr(run, split)
         setattr(out, split, skeleton(sub) if sub is not None else None)
+    out.replay = run.replay
+    if run.replays is not None:
+        out.replays = loader.Replays(out)  # read again when asked for
     return out
 
 

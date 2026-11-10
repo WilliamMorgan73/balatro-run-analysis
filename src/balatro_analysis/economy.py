@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from balatro_analysis import catalog, stats
+from balatro_analysis.cards import item_extra
 from balatro_analysis.loader import Run, memo
 
 DEFAULT_INTEREST_CAP = 25
@@ -333,7 +334,10 @@ def price_paid(runs: list[Run]) -> pd.DataFrame:
             continue
         b = s[s["category"].isin(BUY_CATEGORIES[:-1]) & (s["spent"] > 0)]
         frames.append(b[["episode", "ante", "category", "item_key", "spent"]].assign(run=r.name))
-    return _concat(frames).rename(columns={"spent": "price"})
+    out = _concat(frames).rename(columns={"spent": "price"})
+    if out.empty:  # nothing bought: the columns still, for callers grouping on them
+        return pd.DataFrame(columns=["episode", "ante", "category", "item_key", "price", "run"])
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +464,9 @@ def offers(run: Run) -> pd.DataFrame:
                         ),
                         "affordable": item["cost"] <= offer["dollars"],
                         "bought": bought,
+                        # log_version 17 (None and () before)
+                        "edition": item_extra(item)[0],
+                        "stickers": item_extra(item)[1],
                     }
                 )
     return pd.DataFrame(rows).assign(run=run.name)

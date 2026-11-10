@@ -17,7 +17,15 @@ from collections.abc import Callable
 import pandas as pd
 
 from balatro_analysis import catalog
-from balatro_analysis.cards import RANKS, SUIT_SYMBOLS, PlayingCard, joker_state, state_label
+from balatro_analysis.cards import (
+    EDITION_NAMES,
+    RANKS,
+    SUIT_SYMBOLS,
+    PlayingCard,
+    extra_badges,
+    joker_state,
+    state_label,
+)
 from balatro_analysis.names import Names
 from balatro_analysis.theme import CHIPS, INSET, LIP, MONEY, MULT, PANEL, PLAY, TABLE, WIN
 
@@ -336,12 +344,25 @@ def _slot(item: pd.Series, names: Names, icon_uri: IconUri) -> str:
         if uri
         else f'<div class="rp-noart">{_esc(name)}</div>'
     )
-    cls = " ".join(c for c in ("rp-slot", item["kind"], "bought" if item["bought"] else "") if c)
-    label = f"{name} (bought)" if item["bought"] else name
+    ed = item.get("edition")
+    ed = ed if isinstance(ed, str) else None
+    stickers = item.get("stickers")
+    stickers = tuple(stickers) if isinstance(stickers, list | tuple) else ()
+    cls = " ".join(
+        c
+        for c in ("rp-slot", item["kind"], "bought" if item["bought"] else "", ed and f"ed-{ed}")
+        if c
+    )
+    extra = [EDITION_NAMES.get(ed, ed)] if ed else []
+    extra += [s.title() for s in stickers]
+    label = (
+        name + (f" ({', '.join(extra)})" if extra else "") + (" (bought)" if item["bought"] else "")
+    )
+    badges = extra_badges(ed, stickers)
     return (
         f'<div class="{cls}" title="{_esc(label)}">{art}'
         f'<span class="rp-price rp-px">${_esc(item["cost"])}</span>'
-        f"<span>{_esc(name)}</span></div>"
+        f"<span>{_esc(name)}</span>{badges}</div>"
     )
 
 
@@ -417,6 +438,7 @@ SHEET_CSS = f"""<style>
   overflow-wrap:anywhere}}
 .rs-who{{font-size:12.5px;opacity:.8;margin-top:2px}}
 .rs-best{{color:{PLAY};font-weight:800}}
+.rs-endless{{color:#b26cbb;font-weight:800}}
 .rs-wells{{display:grid;grid-template-columns:1.3fr 1fr;gap:8px}}
 .rs-well{{background:{TABLE};border-radius:8px;padding:6px 10px}}
 .rs-well small{{display:block;font-size:12px;opacity:.75}}
@@ -448,8 +470,10 @@ def run_sheet_html(
     icon_uri: IconUri,
     most_played: str | None = None,
     best: bool = False,
+    replay: dict | None = None,
 ) -> str:
-    """One run as the game's run-over screen: mean ante large, then the rest."""
+    """One run as the game's run-over screen: mean ante large, then the rest.
+    ``replay``: the replay.json of a replay's games, shown in the header."""
     who = (
         f"{_agent(config.get('shop_agent'), 'ShopAgent')} shop, "
         f"{_agent(config.get('play_agent'), 'PlayAgent')} play"
@@ -460,6 +484,12 @@ def run_sheet_html(
     lines = [("Best ante", str(best_ante)), ("Episodes", str(episodes))]
     if most_played:
         lines.append(("Most played hand", most_played))
+    if replay:
+        lines.append(("Replay", str(replay.get("tag", "?"))))
+        if replay.get("stakes"):
+            lines.append(("Stakes", ", ".join(names.stake(x) for x in replay["stakes"])))
+        if replay.get("endless"):
+            lines.append(("Endless", "yes"))
     deck_art = "".join(
         f'<img src="{u}" alt="{_esc(names.deck(d))}" title="{_esc(names.deck(d))}">'
         if (u := icon_uri(d))
@@ -467,6 +497,9 @@ def run_sheet_html(
         for d in decks
     )
     best_html = '<span class="rs-best"> Best mean ante</span>' if best else ""
+    if config.get("endless") or (replay or {}).get("endless"):
+        best_html += '<span class="rs-endless" title="Won runs play on past ante 8"> Endless</span>'
+
     return (
         f'{SHEET_CSS}<div class="rs{" best" if best else ""}">'
         f'<div><div class="rs-name">{_esc(name)}</div>'

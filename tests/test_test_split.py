@@ -1,10 +1,13 @@
 """The test set (<run>/test/, balatro-shop-rl log_version 14): the final policy on
 fixed games, loaded as Run.test and the dashboard's default view."""
 
+import json
+import os
 import shutil
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 from test_app import TABS
@@ -127,3 +130,114 @@ def test_app_without_test_defaults_to_training(eval_runs_dir):
 def test_every_tab_renders_in_every_phase(test_runs_dir, phase, tab):
     at = _app(test_runs_dir, phase, tab)
     assert not at.exception
+
+
+def _add_replay(run_dir: Path, tag: str = "retest", **info) -> Path:
+    """A replay of ``run_dir``'s test games (balatro-shop-rl's replay_test.py),
+    with a replay.json of ``info``."""
+    out = run_dir / "replay" / tag
+    shutil.copytree(run_dir / "test", out)
+    info = {
+        "tag": tag,
+        "games": 3,
+        "decks": ["b_red"],
+        "stakes": [1],
+        "endless": False,
+        "log_version": 17,
+        **info,
+    }
+    (out / "replay.json").write_text(json.dumps(info))
+    return out
+
+
+def test_replay_dir_is_not_a_run(test_runs_dir):
+    _add_replay(test_runs_dir / "run_a")
+    assert [p.name for p in find_runs(test_runs_dir)] == ["run_a", "run_b"]
+
+
+def test_replay_dir_given_as_root_reads_the_runs_config(test_runs_dir):
+    replay = _add_replay(test_runs_dir / "run_a")
+    assert load_run(replay).config == load_run(test_runs_dir / "run_a").config
+
+
+def test_adding_a_replay_keeps_the_cached_run(test_runs_dir):
+    path = test_runs_dir / "run_a"
+    before = runcache.fingerprint(path)
+    _add_replay(path)
+    assert runcache.fingerprint(path) == before
+
+
+def test_replays_load_when_asked_for(test_runs_dir):
+    _add_replay(test_runs_dir / "run_a", endless=True)
+    _add_replay(test_runs_dir / "run_a", "decks_mix")
+    run = load_run(test_runs_dir / "run_a", test_runs_dir)
+    assert run.splits() == [run.eval, run.test]  # nothing read yet
+    assert run.replays.tags() == ["decks_mix", "retest"]
+    retest = run.split("replay/retest")
+    assert retest is run.replays.get("retest")  # read once
+    assert retest.name == "run_a" and retest.replay["tag"] == "retest"
+    assert retest.config["log_version"] == 17 and retest.config["endless"] is True
+    assert run.config.get("endless") is None  # the run's own config is untouched
+    assert list(retest.episodes["seed"]) == ["TEST_0", "TEST_1", "TEST_2"]
+    assert retest.hands is not None
+    assert run.splits() == [run.eval, run.test, retest]
+    assert run.read_bytes() >= retest.read_bytes() > 0
+    assert run.unload() > 0 and retest.loaded() == []
+    assert run.split("replay/nope") is None and run.split("eval") is run.eval
+
+
+def test_run_without_replays(test_runs_dir):
+    run = load_run(test_runs_dir / "run_a", test_runs_dir)
+    assert run.replays.tags() == [] and run.split("replay/retest") is None
+
+
+def test_replay_reloads_when_rewritten(test_runs_dir):
+    replay = _add_replay(test_runs_dir / "run_a")
+    run = load_run(test_runs_dir / "run_a", test_runs_dir)
+    first = run.replays.get("retest")
+    e = pd.read_csv(replay / "episodes.csv").head(2)
+    e.to_csv(replay / "episodes.csv", index=False)
+    os.utime(replay / "episodes.csv", ns=(1, 1))
+    assert len(run.replays.get("retest").episodes) == 2 != len(first.episodes)
+
+
+def test_cached_run_reads_replays_through_the_table_cache(test_runs_dir):
+    _add_replay(test_runs_dir / "run_a")
+    path, folder = test_runs_dir / "run_a", runcache.cache_dir()
+    first = runcache.load_run_cached(path, test_runs_dir, folder)
+    assert first.replays.get("retest").steps is not None
+    again = runcache.load_run_cached(path, test_runs_dir, folder)
+    assert again.splits() == [again.eval, again.test]  # the cache holds no replay
+    retest = again.replays.get("retest")
+    assert isinstance(retest._reader, runcache.CachedTableReader)
+    assert retest.steps is not None
+
+
+def test_filter_keeps_replays(test_runs_dir):
+    _add_replay(test_runs_dir / "run_a")
+    run = load_run(test_runs_dir / "run_a", test_runs_dir)
+    cut = metrics.filter_episodes(run, 0, 0)
+    assert cut is not run and cut.replays.tags() == ["retest"]
+
+
+@pytest.fixture
+def replay_runs_dir(test_runs_dir):
+    """test_runs_dir with a retest replay of both runs and a stakes replay of run_a."""
+    for name in ("run_a", "run_b"):
+        _add_replay(test_runs_dir / name)
+    _add_replay(test_runs_dir / "run_a", "stakes_4_7", stakes=[4, 7])
+    return test_runs_dir
+
+
+def test_app_offers_the_replays_every_run_has(replay_runs_dir):
+    at = _app(replay_runs_dir)
+    assert not at.exception
+    options = at.sidebar.segmented_control(key="phase").options
+    assert options == ["Test", "Evaluation", "Replay: retest", "Training"]
+
+
+@pytest.mark.parametrize("tab", TABS)
+def test_every_tab_renders_on_a_replay(replay_runs_dir, tab):
+    at = _app(replay_runs_dir, "Replay: retest", tab)
+    assert not at.exception
+    assert any("played again" in c.value for c in at.sidebar.caption)

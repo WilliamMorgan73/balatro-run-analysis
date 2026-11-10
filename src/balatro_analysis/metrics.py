@@ -53,6 +53,8 @@ def filter_episodes(
         **dict.fromkeys(TABLES, UNREAD),  # cut from run's when first asked for
         eval=filtered_eval,
         test=filtered_test,
+        replays=run.replays,  # unfiltered: a replay is picked as a split, then filtered
+        replay=run.replay,
     )
     out._reader = SubsetReader(run, episodes)
     return out
@@ -95,12 +97,20 @@ CURVE_METRICS = {"mean ante": "ante", "win rate": "won", "mean return": "return"
 Z95 = 1.959964
 
 
-def learning_curve(runs: list[Run], window: int) -> pd.DataFrame:
+CURVE_POINTS = 2000  # most points per run on a learning curve
+
+
+def learning_curve(runs: list[Run], window: int, max_points: int = CURVE_POINTS) -> pd.DataFrame:
     """Rolling mean ante, win rate and return per episode, each with a 95%
     normal-approximation band (``<metric> low`` / ``<metric> high``: mean ± 1.96
-    standard errors over the window; zero width until the window has 2 episodes)."""
+    standard errors over the window; zero width until the window has 2 episodes).
+    Runs longer than ``max_points`` episodes (week-long runs have hundreds of
+    thousands) keep every k-th episode number, the same ones in every run so that
+    group curves still line up, and each run's last."""
     frames = []
     cols = list(CURVE_METRICS.values())
+    longest = max((len(r.episodes) for r in runs), default=0)
+    every = -(-longest // max_points) if max_points else 1
     for r in runs:
         e = r.episodes.sort_values("episode")
         rolling = e[cols].astype(float).rolling(window, min_periods=1)
@@ -111,7 +121,11 @@ def learning_curve(runs: list[Run], window: int) -> pd.DataFrame:
             frame[label] = mean[col].to_numpy()
             frame[f"{label} low"] = (mean[col] - half[col]).to_numpy()
             frame[f"{label} high"] = (mean[col] + half[col]).to_numpy()
-        frames.append(pd.DataFrame(frame))
+        frame = pd.DataFrame(frame)
+        if every > 1:
+            ep = frame["episode"]
+            frame = frame[(ep % every == 0) | (ep == ep.max())].reset_index(drop=True)
+        frames.append(frame)
     return _concat(frames)
 
 
