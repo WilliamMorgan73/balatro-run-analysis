@@ -228,6 +228,27 @@ def test_export_buttons_present(runs_dir):
     assert labels.count("PNG") == labels.count("SVG") >= 2
 
 
+def test_reload_order_covers_the_package():
+    """Every module is reloaded, after the package modules it imports (purchases
+    was once left out, so the new items module called the old one)."""
+    import ast
+
+    text = Path(APP).read_text()
+    func = next(
+        n
+        for n in ast.parse(text).body
+        if isinstance(n, ast.FunctionDef) and n.name == "reload_order"
+    )
+    package = Path(APP).parent / "src" / "balatro_analysis"
+    ns = {"ast": ast, "PACKAGE_DIR": package}
+    exec("from __future__ import annotations\n" + ast.get_source_segment(text, func), ns)
+    order = ns["reload_order"]()
+    assert set(order) == {p.stem for p in package.glob("*.py")} - {"__init__"}
+    assert order.index("purchases") < order.index("items")
+    assert order.index("stats") < order.index("economy")
+    assert order.index("loader") < order.index("metrics")
+
+
 def test_stale_modules_reloaded(runs_dir, monkeypatch):
     """A server started before a package change must not keep old modules
     (the 'unexpected keyword argument decks' bug)."""

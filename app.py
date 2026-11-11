@@ -6,6 +6,7 @@ uv run streamlit run app.py -- --runs-dir ../balatro-shop-rl/runs
 from __future__ import annotations
 
 import argparse
+import ast
 import collections
 import contextlib
 import functools
@@ -20,28 +21,35 @@ import pandas as pd
 import streamlit as st
 
 PACKAGE_DIR = Path(__file__).parent / "src" / "balatro_analysis"
-RELOAD_ORDER = [
-    "cards",
-    "catalog",
-    "names",
-    "loader",
-    "runcache",
-    "memory",
-    "find",
-    "metrics",
-    "hands",
-    "economy",
-    "actions",
-    "plots",
-    "sprites",
-    "game_text",
-    "theme",
-    "details",
-    "replay",
-    "collection",
-    "picker",
-    "export",
-]
+
+
+def reload_order() -> list[str]:
+    """Every module of the package, each after the package modules it imports
+    (read from the source, so a new module is never left out)."""
+    deps: dict[str, set[str]] = {}
+    for path in sorted(PACKAGE_DIR.glob("*.py")):
+        if path.stem == "__init__":
+            continue
+        found = set()
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module == "balatro_analysis":
+                    found |= {a.name for a in node.names}
+                elif node.module.startswith("balatro_analysis."):
+                    found.add(node.module.split(".")[1])
+        deps[path.stem] = found
+    order: list[str] = []
+
+    def visit(name: str, seen: frozenset = frozenset()) -> None:
+        if name in order or name not in deps or name in seen:
+            return
+        for dep in sorted(deps[name]):
+            visit(dep, seen | {name})
+        order.append(name)
+
+    for name in deps:
+        visit(name)
+    return order
 
 
 def package_mtime() -> float:
@@ -57,7 +65,7 @@ def reload_if_changed() -> None:
     pkg = sys.modules.get("balatro_analysis")
     if pkg is None or getattr(pkg, "_app_mtime", None) == package_mtime():
         return
-    for name in RELOAD_ORDER:
+    for name in reload_order():
         mod = sys.modules.get(f"balatro_analysis.{name}")
         if mod is not None:
             importlib.reload(mod)
