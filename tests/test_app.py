@@ -249,6 +249,20 @@ def test_reload_order_covers_the_package():
     assert order.index("loader") < order.index("metrics")
 
 
+def test_old_module_reloaded_when_only_app_changed(runs_dir, monkeypatch):
+    """The NCC bug: a server reloaded after one pull (stamping the package), then a
+    second pull changed only app.py.  An old purchases (no ``offers``) left loaded
+    must still be replaced, though no package file changed since."""
+    from balatro_analysis import purchases
+
+    at = _run(runs_dir)
+    monkeypatch.delattr(purchases, "offers")
+    monkeypatch.setattr(purchases, "_app_mtime", 0.0, raising=False)  # loaded from an old file
+    at.run()
+    assert not at.exception
+    assert hasattr(purchases, "offers")
+
+
 def test_stale_modules_reloaded(runs_dir, monkeypatch):
     """A server started before a package change must not keep old modules
     (the 'unexpected keyword argument decks' bug)."""
@@ -261,9 +275,7 @@ def test_stale_modules_reloaded(runs_dir, monkeypatch):
         raise AssertionError("stale module used")
 
     monkeypatch.setattr(metrics, "filter_episodes", old_filter)
-    import balatro_analysis
-
-    del balatro_analysis._app_mtime  # like a server started before this guard existed
+    del metrics._app_mtime  # like a server started before this guard existed
     at.run()
     assert not at.exception
     assert metrics.filter_episodes.__code__ is not old_filter.__code__

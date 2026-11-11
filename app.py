@@ -57,18 +57,42 @@ def package_mtime() -> float:
     return max(p.stat().st_mtime for p in files)
 
 
+def _source_mtime(mod) -> float | None:
+    try:
+        return Path(mod.__file__).stat().st_mtime
+    except (AttributeError, TypeError, OSError):
+        return None
+
+
+def stale_modules() -> list[str]:
+    """Loaded package modules whose file changed since they were loaded (or that
+    were never stamped: loaded by older app code)."""
+    out = []
+    for name, mod in list(sys.modules.items()):
+        if name.startswith("balatro_analysis.") and mod is not None:
+            if getattr(mod, "_app_mtime", None) != _source_mtime(mod):
+                out.append(name)
+    return out
+
+
 def reload_if_changed() -> None:
     """Streamlit re-runs this script on edit but keeps imported package modules,
-    so a long-running server would mix new app code with old modules. Reload
-    the package (in dependency order) when its files changed since it was
-    stamped below, or when it was never stamped (a server started on older code)."""
-    pkg = sys.modules.get("balatro_analysis")
-    if pkg is None or getattr(pkg, "_app_mtime", None) == package_mtime():
+    so a long-running server would mix new app code with old modules (a new
+    module calling an old one).  If any loaded module is stale, reload every
+    loaded one, each after the modules it imports, and stamp them."""
+    if not stale_modules():
         return
     for name in reload_order():
         mod = sys.modules.get(f"balatro_analysis.{name}")
         if mod is not None:
             importlib.reload(mod)
+
+
+def stamp_modules() -> None:
+    """Record each loaded package module's file time (see ``stale_modules``)."""
+    for name, mod in list(sys.modules.items()):
+        if name.startswith("balatro_analysis.") and mod is not None:
+            mod._app_mtime = _source_mtime(mod)
 
 
 reload_if_changed()
@@ -105,7 +129,7 @@ from balatro_analysis.names import Names, split_items  # noqa: E402
 from balatro_analysis.picker import PickerUnavailable, pick_directory  # noqa: E402
 from balatro_analysis.sprites import Sprites, find_balatro, game_archive  # noqa: E402
 
-sys.modules["balatro_analysis"]._app_mtime = package_mtime()  # see reload_if_changed
+stamp_modules()  # see reload_if_changed
 
 DEFAULT_RUNS_DIR = Path(__file__).parent.parent / "balatro-shop-rl" / "runs"
 MIN_VISITS = 5  # money-curve points need at least this many shop visits
