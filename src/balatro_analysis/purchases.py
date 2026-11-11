@@ -108,29 +108,36 @@ def _decisions(steps: pd.DataFrame) -> dict[int, list[dict]]:
     return out
 
 
-def run_counts(run: Run, by: str | None = None) -> pd.DataFrame:
-    """One run's counts: ``part`` (the episode's ``by`` value, or "all"),
-    ``category``, ``offered``, ``legal``, ``bought``.  Empty without shops and steps
-    logs.  Memoised on the run."""
+ITEM_COLUMNS = [
+    "episode", "listing", "visit", "ante", "step", "kind", "key", "cost",
+    "ed", "st", "slots_full", "legal", "bought",
+]  # fmt: skip
+
+
+def listing_items(run: Run) -> pd.DataFrame:
+    """One row per item shown in a listing (hidden items skipped), as the script
+    counts them: ``episode``, ``listing`` (the listing's number in the episode),
+    ``visit`` (the shop visit: an entering listing and the rerolls after it),
+    ``ante``, ``step``, ``kind``, ``key``, ``cost``, ``ed``, ``st`` (a tuple, or None
+    before log_version 17), ``slots_full`` (None when unknown), ``legal``, ``bought``.
+    Empty without shops and steps logs.  Memoised on the run."""
 
     def build() -> pd.DataFrame:
         shops, steps = run.shops, run.steps
         if shops is None or steps is None or shops.empty:
-            return pd.DataFrame(columns=["part", "category", *COUNTS])
-        part_of = (
-            dict(zip(run.episodes["episode"], run.episodes[by], strict=True))
-            if by and by in run.episodes
-            else {}
-        )
+            return pd.DataFrame(columns=ITEM_COLUMNS)
         decisions = _decisions(steps)
-        counts: dict[tuple[str, str], Counter] = defaultdict(Counter)
+        cols = [c for c in ("episode", "step", "ante", "reason", "items") if c in shops]
         listings_by_ep: dict[int, list[dict]] = defaultdict(list)
-        for shop in shops[["episode", "step", "items"]].to_dict("records"):
+        for shop in shops[cols].to_dict("records"):
             listings_by_ep[int(shop["episode"])].append(shop)
+        rows = []
         for ep, listings in listings_by_ep.items():
-            part = part_of.get(ep, "?") if by else "all"
             ep_steps = decisions.get(ep, [])
+            visit = -1
             for n, shop in enumerate(listings):
+                if _value(shop.get("reason")) != "reroll":
+                    visit += 1
                 end = listings[n + 1]["step"] if n + 1 < len(listings) else float("inf")
                 window = [d for d in ep_steps if shop["step"] <= d["step"] < end]
                 first = window[0] if window else None
@@ -139,6 +146,9 @@ def run_counts(run: Run, by: str | None = None) -> pd.DataFrame:
                     held = first.get("jokers_before")
                     held = held if not _missing(held) else []
                     slots_full = len(held) >= first["joker_slots"]
+                ante = _value(shop.get("ante"))
+                if ante is None and first is not None:
+                    ante = _value(first.get("ante"))
                 items = shop["items"] if isinstance(shop["items"], list | np.ndarray) else []
                 for item in items:
                     if _value(item.get("hidden")):
@@ -166,29 +176,105 @@ def run_counts(run: Run, by: str | None = None) -> pd.DataFrame:
                         ):
                             bought = True
                     st = _value(item.get("st"))
-                    for cat in categories(
-                        kind, key, ed, list(st) if st is not None else None, slots_full
-                    ):
-                        c = counts[(part, cat)]
-                        c["offered"] += 1
-                        c["legal"] += legal
-                        c["bought"] += bought
+                    rows.append(
+                        {
+                            "episode": ep,
+                            "listing": n,
+                            "visit": visit,
+                            "ante": ante,
+                            "step": shop["step"],
+                            "kind": kind,
+                            "key": key,
+                            "cost": _value(item.get("cost")),
+                            "ed": ed,
+                            "st": tuple(st) if st is not None else None,
+                            "slots_full": slots_full,
+                            "legal": legal,
+                            "bought": bought,
+                        }
+                    )
+        return pd.DataFrame(rows, columns=ITEM_COLUMNS)
+
+    return memo(run, "purchases:items", build)
+
+
+def offers(run: Run, per_offer: bool = True) -> pd.DataFrame:
+    """``listing_items`` with, if ``per_offer``, each item counted once however many
+    listings showed it: a voucher stays for its whole ante and a pack for its whole
+    shop visit (rerolls replace only the card slots), so their repeat listings are
+    one offer, legal or bought if any of its listings was.  The offer keeps its first
+    listing's other fields.  Without ``per_offer``, the listings as the script counts
+    them."""
+    items = listing_items(run)
+    if not per_offer or items.empty:
+        return items
+
+    def build() -> pd.DataFrame:
+        df = items.reset_index(drop=True)
+        # the same item in one listing more than once stays that many offers
+        copy = df.groupby(["episode", "listing", "kind", "key", "ed"], dropna=False).cumcount()
+        known_ante = df["ante"].notna()
+        voucher = (df["kind"] == "voucher") & known_ante
+        scope = np.where(
+            voucher,
+            "a" + df["ante"].astype(str),
+            np.where(
+                df["kind"] == "pack", "v" + df["visit"].astype(str), "l" + df["listing"].astype(str)
+            ),
+        )
+        df["_offer"] = scope + "|" + copy.astype(str)
+        keys = ["episode", "_offer", "kind", "key", "ed"]
+        g = df.groupby(keys, dropna=False, sort=False)
+        first = g.head(1).set_index(keys)
+        anys = g[["legal", "bought"]].any()
+        first[["legal", "bought"]] = anys.loc[first.index].to_numpy()
+        return first.reset_index().drop(columns="_offer")[ITEM_COLUMNS]
+
+    return memo(run, "purchases:offers", build)
+
+
+def run_counts(run: Run, by: str | None = None, per_offer: bool = False) -> pd.DataFrame:
+    """One run's counts: ``part`` (the episode's ``by`` value, or "all"),
+    ``category``, ``offered``, ``legal``, ``bought``.  Per listing by default, as the
+    script; ``per_offer`` counts a voucher or pack once (see ``offers``).  Empty
+    without shops and steps logs.  Memoised on the run."""
+
+    def build() -> pd.DataFrame:
+        items = offers(run, per_offer)
+        if items.empty:
+            return pd.DataFrame(columns=["part", "category", *COUNTS])
+        part_of = (
+            dict(zip(run.episodes["episode"], run.episodes[by], strict=True))
+            if by and by in run.episodes
+            else {}
+        )
+        counts: dict[tuple[str, str], Counter] = defaultdict(Counter)
+        for item in items.itertuples(index=False):
+            part = part_of.get(item.episode, "?") if by else "all"
+            st = list(item.st) if item.st is not None else None
+            for cat in categories(item.kind, item.key, _value(item.ed), st, item.slots_full):
+                c = counts[(part, cat)]
+                c["offered"] += 1
+                c["legal"] += bool(item.legal)
+                c["bought"] += bool(item.bought)
         rows = [
             {"part": p, "category": cat, **{k: c[k] for k in COUNTS}}
             for (p, cat), c in counts.items()
         ]
         return pd.DataFrame(rows, columns=["part", "category", *COUNTS])
 
-    return memo(run, f"purchases:{by}", build)
+    return memo(run, f"purchases:{by}:{per_offer}", build)
 
 
-def buy_rates(groups: dict[str, list[Run]], by: str | None = None) -> pd.DataFrame:
+def buy_rates(
+    groups: dict[str, list[Run]], by: str | None = None, per_offer: bool = False
+) -> pd.DataFrame:
     """Per ``part``, ``group`` and ``category``: ``rate`` (mean over the group's runs
     with a legal listing of bought ÷ legal), ``sd`` (ddof 1; 0 for one run), ``runs``
     (with a rate), and ``legal`` / ``bought`` / ``offered`` pooled over the runs."""
     rows = []
     for g, runs in groups.items():
-        per_run = [run_counts(r, by) for r in runs]
+        per_run = [run_counts(r, by, per_offer) for r in runs]
         per_run = [c for c in per_run if len(c)]
         if not per_run:
             continue

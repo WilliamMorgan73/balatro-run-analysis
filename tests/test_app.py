@@ -15,6 +15,7 @@ TABS = [
     "Actions",
     "Economy",
     "Jokers",
+    "Shop items",
     "Joker collection",
     "Rounds",
     "Hands",

@@ -248,6 +248,12 @@ explorer's tables add a *Scaling jokers* column.
 
   \* needs runs from the current training script (`log_version` 2 in `config.json`)
 - **Jokers**: most-bought gallery; ante first bought; end-of-episode co-occurrence; sold → next bought pairs
+- **Shop items**: per item, for vouchers, Tarots, Planets, Spectrals, playing cards, packs
+  and jokers: offers, how often buying it was legal, buy rate when legal (mean ± SD over
+  runs), skips, shop sells and uses, median first ante bought and the win rate of games that
+  bought it, with a bar chart per kind; split by deck, stake or ante band. A voucher counts
+  once per ante and a pack once per shop visit, not once per reroll (a toggle, also on
+  *Shop purchases*, gives the per-listing count of balatro-shop-rl's `special_buys.py`)
 - **Joker collection**: all 150 jokers as game-style cards (art, effect text, rarity, cost) with
   stats from the selected runs (times bought, first ante, held at end, mean ante); search,
   rarity filter, sort, "only used in runs"
@@ -280,6 +286,8 @@ src/balatro_analysis/export.py  data ZIP and PNG/SVG chart export
 src/balatro_analysis/sprites.py icons from the local game install
 src/balatro_analysis/game_text.py joker effect text from the local game install
 src/balatro_analysis/collection.py the Joker collection cards
+src/balatro_analysis/purchases.py shop listings and offers, buy rates by category
+src/balatro_analysis/items.py   buy, skip, sell and use rates per shop item
 src/balatro_analysis/picker.py  native folder dialog
 src/balatro_analysis/cards.py   playing cards from the eval hand log
 src/balatro_analysis/hands.py   play metrics from the eval hand log

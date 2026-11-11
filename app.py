@@ -75,6 +75,7 @@ from balatro_analysis import (  # noqa: E402
     export,
     find,
     hands,
+    items,
     latex,
     loader,
     memory,
@@ -1042,7 +1043,7 @@ def shop_purchases() -> None:
     item_runs_caption(swapped)
     if old := [r.name for r in item_list if not purchases.has_editions(r)]:
         need_new(None, "editions, stickers or joker slots for " + ", ".join(old), version=17)
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     by = c1.selectbox(
         "Split by",
         [None, "deck", "stake"],
@@ -1055,7 +1056,13 @@ def shop_purchases() -> None:
         value=purchases.MIN_LEGAL,
         key="buys_min_legal",
     )
-    rates = purchases.buy_rates(grouped(item_list), by)
+    per_offer = c3.toggle(
+        "Count a voucher or pack once per offer",
+        value=True,
+        key="buys_per_offer",
+        help=PER_OFFER_HELP,
+    )
+    rates = purchases.buy_rates(grouped(item_list), by, per_offer)
     if not need(rates, "shop listings"):
         return
     for part in sorted(rates["part"].unique(), key=str):
@@ -1071,7 +1078,13 @@ def shop_purchases() -> None:
         "bought ÷ listings where buying the item was legal (affordable, with room) at some "
         "decision while it was on offer, per run, then mean ± SD over the group's runs; (n) = "
         "legal listings pooled. Picks from packs aren't shop buys. Slots full: no free joker "
-        "slot at the listing. As balatro-shop-rl's scripts/special_buys.py."
+        "slot at the listing. "
+        + (
+            "Vouchers and packs count once per offer, not per listing: turn the toggle off "
+            "for balatro-shop-rl's scripts/special_buys.py numbers."
+            if per_offer
+            else "As balatro-shop-rl's scripts/special_buys.py."
+        )
     )
     st.download_button(
         "Buy rates (CSV)",
@@ -1080,6 +1093,135 @@ def shop_purchases() -> None:
         mime="text/csv",
         key="dl_buy_rates",
         on_click="ignore",
+    )
+
+
+PER_OFFER_HELP = (
+    "A voucher stays in the shop for its whole ante and a pack for its whole shop visit "
+    "(rerolls replace only the two card slots), so each shop visit and reroll lists them "
+    "again. On: each counts once, legal or bought if it was at any of its listings. Off: "
+    "once per listing, as balatro-shop-rl's scripts/special_buys.py."
+)
+ITEM_SPLITS = [None, "deck", "stake", "ante"]
+
+
+def _pct(v) -> str:
+    return "" if pd.isna(v) else f"{v:.0%}"
+
+
+def shop_items() -> None:
+    """Per item, every kind the shop sells: buy rate when legal, skips, sells, uses."""
+    item_list, swapped = item_runs()
+    if not need(
+        [r for r in item_list if r.has("shops") and r.has("steps")] or None,
+        "shop and step logs",
+        no_steps,
+    ):
+        return
+    item_runs_caption(swapped)
+    c1, c2, c3 = st.columns(3)
+    by = c1.selectbox(
+        "Split by",
+        ITEM_SPLITS,
+        format_func=lambda c: "Nothing" if c is None else names.column(c),
+        key="items_by",
+    )
+    min_legal = c2.number_input(
+        "Hide items with fewer legal offers than", 0, value=10, key="items_min_legal"
+    )
+    per_offer = c3.toggle(
+        "Count a voucher or pack once per offer",
+        value=True,
+        key="items_per_offer",
+        help=PER_OFFER_HELP,
+    )
+    rates = items.item_rates(grouped(item_list), by, per_offer)
+    if not need(rates, "shop offers"):
+        return
+    sections = list(items.SECTIONS)
+    sub = st.tabs(sections, key="items_tab", on_change="rerun")
+    for name, tab in zip(sections, sub, strict=True):
+        with tab:
+            if not tab.open:
+                continue
+            rows = items.section(rates, name)
+            if rows.empty:
+                st.info(f"The shop offered no {name.lower()} in these games.")
+                continue
+            parts = sorted(rows["part"].unique(), key=str)
+            for part in parts:
+                if by is not None:
+                    label = (
+                        f"Ante {part}"
+                        if by == "ante"
+                        else f"{names.column(by)}: {names.of(by)(part)}"
+                    )
+                    st.markdown(f"**{label}**")
+                shown = items.wide_table(rows, part, int(min_legal))
+                if shown.empty:
+                    st.caption(
+                        f"No item with {int(min_legal)} legal offers: lower the threshold above."
+                    )
+                    continue
+                chart(
+                    plots.item_rates(
+                        shown.assign(group=shown.get("group", "all")),
+                        names,
+                        f"{name}: buy rate when legal",
+                    ),
+                    f"shop items {name} {part}",
+                    f"Buy rate of each of the {name.lower()} the shop offered: offers bought ÷ "
+                    "offers it could have bought, per run, then the mean over the group's runs "
+                    "(error bars: SD).",
+                )
+                display = shown.assign(
+                    rate=[
+                        "-" if pd.isna(r) else f"{r:.0%} ± {sd:.0%}"
+                        for r, sd in zip(shown["rate"], shown["sd"], strict=True)
+                    ],
+                    sell_rate=shown["sell_rate"].map(_pct),
+                    use_rate=shown["use_rate"].map(_pct),
+                    win_rate_bought=shown["win_rate_bought"].map(_pct),
+                    first_ante=shown["first_ante"].map(lambda v: "" if pd.isna(v) else f"{v:g}"),
+                    mean_cost=shown["mean_cost"].map(lambda v: "" if pd.isna(v) else f"${v:.1f}"),
+                ).drop(columns=["sd", "runs"])
+                if name != "Tarots" and name != "Planets" and name != "Spectrals":
+                    display = display.drop(columns=["used", "use_rate"])
+                display = display.rename(
+                    columns={
+                        "rate": "buy_rate",
+                        "sell_rate": "sold_per_buy",
+                        "use_rate": "used_per_buy",
+                        "first_ante": "median_first_ante",
+                    }
+                )
+                item_table(display, ["key"], f"items-{name}-{part}".replace(" ", "-"))
+            if name == "Packs":
+                pack_rates = purchases.buy_rates(
+                    grouped(item_list), by if by != "ante" else None, per_offer
+                )
+                pack_rates = pack_rates[pack_rates["category"].str.startswith("Pack")]
+                for part in sorted(pack_rates["part"].unique(), key=str):
+                    st.markdown(
+                        "**By kind and size**" + (f" · {part}" if by not in (None, "ante") else "")
+                    )
+                    table(purchases.rate_table(pack_rates, part, 0))
+            st.download_button(
+                f"{name} (CSV)",
+                data=rows.to_csv(index=False),
+                file_name=f"shop_items_{name.lower().replace(' ', '_')}.csv",
+                mime="text/csv",
+                key=f"dl_items_{name}",
+                on_click="ignore",
+            )
+    st.caption(
+        "Per item, over the selected runs' games. Legal: the agent could have bought it "
+        "(affordable, with room) at some decision while it was on offer. Buy rate = bought "
+        "÷ legal per run, mean ± SD over the group's runs. Skipped = legal but not bought. "
+        "Sold and used count the shop's sell and use decisions on that item; the item may "
+        "have come from a pack, so per buy can pass 100%. Picks inside packs and uses "
+        "during a round aren't logged. Median first ante: the ante it was first bought in "
+        "an episode. Win rate: of the episodes that bought it."
     )
 
 
@@ -1196,6 +1338,7 @@ tabs = st.tabs(
         "Actions",
         "Economy",
         "Jokers",
+        "Shop items",
         "Joker collection",
         "Rounds",
         "Hands",
@@ -2547,9 +2690,14 @@ with tabs[4], table_budget():
             )
         sticker_panel()
 
-# --- Joker collection -----------------------------------------------------
+# --- Shop items -------------------------------------------------------------
 with tabs[5], table_budget():
     if tabs[5].open:
+        shop_items()
+
+# --- Joker collection -----------------------------------------------------
+with tabs[6], table_budget():
+    if tabs[6].open:
         game_text = cached_game_text(str(archive), pkg_mtime) if archive else None
         cards = joker_cards()
         c1, c2, c3, c4 = st.columns([3, 3, 2, 2])
@@ -2575,8 +2723,8 @@ with tabs[5], table_budget():
             st.info("No jokers match.")
 
 # --- Rounds ---------------------------------------------------------------
-with tabs[6], table_budget():
-    if tabs[6].open:
+with tabs[7], table_budget():
+    if tabs[7].open:
         st.subheader("Boss blinds")
         bosses = metrics.boss_stats(runs)
         if need(bosses, "boss blinds faced", no_rounds):
@@ -2621,8 +2769,8 @@ def hand_log_missing(run_list: list[Run]) -> bool:
     return True
 
 
-with tabs[7], table_budget():
-    if tabs[7].open and not hand_log_missing(runs):
+with tabs[8], table_budget():
+    if tabs[8].open and not hand_log_missing(runs):
         if missing := [r.name for r in runs if not hands.has_hands(r)]:
             st.caption("No hand log, not shown: " + ", ".join(missing))
         logged = [r for r in runs if hands.has_hands(r)]
@@ -2690,11 +2838,11 @@ def card_uri(card) -> str | None:
     return sprites.card_uri(card) if sprites else None
 
 
-with tabs[8], table_budget():
-    if not tabs[8].open:
+with tabs[9], table_budget():
+    if not tabs[9].open:
         for key in ("run", "episode"):  # the link belongs to the explorer
             st.query_params.pop(key, None)
-    if tabs[8].open:
+    if tabs[9].open:
         ex_top = st.columns([1, 3], vertical_alignment="bottom")
         run_name = ex_top[0].selectbox("Run", run_names, key="explorer_run")
         run = by_name[run_name]

@@ -631,6 +631,28 @@ def offer_conversion(df: pd.DataFrame, names: Names) -> go.Figure:
     return _fig(fig)
 
 
+def item_rates(df: pd.DataFrame, names: Names, title: str) -> go.Figure:
+    """Buy rate per item (``items.item_rates`` rows), error bars the SD over runs,
+    one colour per group; items in the frame's order."""
+    df = df.assign(item=df["key"].map(names.item))
+    fig = px.bar(
+        df,
+        x="item",
+        y="rate",
+        error_y="sd",
+        color="group",
+        barmode="group",
+        hover_data={"legal": True, "bought": True, "runs": True, "sd": ":.2f"},
+        category_orders={"item": list(dict.fromkeys(df["item"]))},
+        labels=_labels(names, "group", "legal", "bought", "runs")
+        | {"item": "", "rate": "buy rate"},
+        title=title,
+    )
+    fig.update_yaxes(tickformat=".0%", rangemode="tozero")
+    fig.update_xaxes(tickangle=-45)
+    return _fig(fig, showlegend=df["group"].nunique() > 1)
+
+
 def offered_vs_paid(conversion: pd.DataFrame, paid: pd.DataFrame, names: Names) -> go.Figure:
     p = paid.groupby(["run", "category"], as_index=False)["price"].mean()
     df = conversion[["run", "category", "mean_price"]].merge(p, on=["run", "category"], how="left")
